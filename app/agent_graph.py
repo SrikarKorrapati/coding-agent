@@ -87,12 +87,20 @@ def normalize_safety_assessment(value, commands, permission_mode):
 
 
 def planner_node(state):
+    recent_history = state["session"].get("history", [])[-8:]
+    conversation_context = "\n".join(
+        f"{item.get('role', 'message')}: {item.get('content') or item.get('prompt') or ''}"
+        for item in recent_history
+    ) or "(no earlier messages)"
     response = call_agent(
         state["session"]["settings"],
         AGENT_BY_ID["planner"],
         f"""{json_only("{ needsClarification:boolean, clarificationQuestion:string, tasks:[{ id:string, title:string, verification:string }] }")}
 
 Mode: {state['input']['mode']}
+Recent conversation (use it to understand follow-ups and plan revisions):
+{conversation_context}
+
 Prompt: {state['input']['prompt']}
 Selected code:
 {state['input'].get('selectedCode') or '(none)'}""",
@@ -114,6 +122,8 @@ def read_only_agent_node(state):
         AGENT_BY_ID["reviewer"],
         f"""Answer in {state['input']['mode']} mode without modifying files.
 
+For Plan mode, present the complete current plan as a numbered list of small steps and include each step's verification. Incorporate requested changes to an earlier plan using the recent conversation context. If clarification is needed, ask only the planner's clarification question.
+
 Plan:
 {state.get('plan', {}).get('tasks', [])}
 
@@ -127,7 +137,17 @@ Selected code:
 {state['input']['prompt']}""",
         on_token=state.get("on_token"),
     )
-    final_result = response["content"] if response["ok"] else f"{response['content']}\n\nLocal fallback: I can inspect files and plan, but real Q&A requires a provider API key in Settings."
+    if response["ok"]:
+        final_result = response["content"]
+    elif state["input"]["mode"] == "plan" and not state.get("plan", {}).get("needsClarification"):
+        tasks = state.get("plan", {}).get("tasks", [])
+        steps = "\n".join(
+            f"{index}. {task.get('title', 'Task')}\n   Verify: {task.get('verification', 'Review the result.') }"
+            for index, task in enumerate(tasks, 1)
+        )
+        final_result = f"Draft plan (local fallback; add an API key for AI planning):\n\n{steps}"
+    else:
+        final_result = f"{response['content']}\n\nLocal fallback: I can inspect files and plan, but real Q&A requires a provider API key in Settings."
     return {"final_result": final_result, **event("reviewer", "Produced a read-only response.")}
 
 

@@ -9,7 +9,7 @@ This project is a minimal Python local coding agent. It keeps the implementation
 - Persistent chats with shared provider API keys, per-key enable switches, and model defaults.
 - Provider-aware model lists in the UI.
 - Persistent prompt queues processed in FIFO order per session.
-- Four modes: Ask, Plan, Debug, and Agent.
+- Four modes: Ask, Plan, Debug, and Agent. Plan mode returns editable-in-chat steps with verification notes and uses recent conversation context for revisions.
 - Chat-style transcript with live streamed assistant replies.
 - AI agent nodes for Planner, Developer, Safety, Reviewer, Tester, Browser Tester, and Deployer; the Tester evaluates command evidence and sends supported failures back for correction.
 - File creation and modification through bash commands.
