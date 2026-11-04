@@ -31,9 +31,22 @@
       </aside>
 
       <section class="workspace">
+        <header class="chat-tools">
+          <button id="forkSession" type="button" title="Start a new chat with this chat's context" disabled>Fork chat</button>
+          <button id="compactSession" type="button" title="Summarize older messages and keep them in the archive" disabled>Compact chat</button>
+        </header>
         <section id="conversation" class="conversation" aria-live="polite" aria-label="Conversation"></section>
         <section class="composer">
-          <p id="queueState" class="workspace-status">Create a session to begin.</p>
+          <div class="run-status-row">
+            <p id="queueState" class="workspace-status" data-status="idle" role="status" aria-live="polite">Agent is idle.</p>
+            <button id="jobControl" type="button" hidden>Pause agent</button>
+          </div>
+          <details class="session-memory">
+            <summary>Long-term chat memory</summary>
+            <textarea id="sessionMemory" rows="3" maxlength="8000" aria-label="Long-term chat memory" placeholder="Save stable goals, decisions, and preferences for this chat…"></textarea>
+            <button id="saveMemory" type="button">Save memory</button>
+            <span id="memoryStatus" role="status"></span>
+          </details>
           <div class="mode-row" id="modes">
             <button data-mode="ask" class="selected">Ask</button>
             <button data-mode="plan">Plan</button>
@@ -44,6 +57,7 @@
           <label class="sr-only" for="prompt">Message</label>
           <div id="selectionContext" class="selection-context" hidden>
             <span id="selectionContextLabel"></span>
+            <button id="askAboutSelection" type="button">Ask about selection</button>
             <button id="clearSelectionContext" type="button" aria-label="Remove selected code">×</button>
           </div>
           <textarea id="prompt" rows="4" aria-label="Message" placeholder="Message Coding Agent… Select code in the file viewer or paste a code block for context."></textarea>
@@ -61,6 +75,9 @@
                 <option value="ask_every_time">Ask every time</option>
                 <option value="approve_all">Approve everything</option>
               </select>
+            </label>
+            <label>Browser URL (local website)
+              <input id="browserUrl" type="url" placeholder="http://localhost:3000">
             </label>
             <button id="sendPrompt" class="primary">Send</button>
           </div>

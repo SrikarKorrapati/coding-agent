@@ -1,4 +1,5 @@
 import threading
+import time
 
 from app.agents import AGENTS, normalize_mode
 from app.agent_graph import run_agent_graph
@@ -6,14 +7,16 @@ from app.model_catalog import PROVIDERS, default_model_for, normalize_provider
 from app.storage import (
     add_job_event,
     append_job_stream,
-    append_history,
     append_history_entries,
+    add_job_checkpoint,
     auto_name_session,
     get_job,
     get_session,
     get_settings,
     list_sessions,
     remove_job_from_queue,
+    request_job_pause,
+    resume_job as resume_stored_job,
     update_job,
 )
 
@@ -41,16 +44,18 @@ def resume_queued_jobs():
             if not job:
                 remove_job_from_queue(session["id"], job_id)
                 continue
-            if job.get("status") == "running":
+            if job.get("status") in {"running", "pausing"}:
                 result = "The server restarted while this prompt was running. Inspect the workspace, then submit it again if work remains."
                 update_job(job_id, {"status": "failed", "result": result})
-                append_history(session["id"], {"role": "assistant", "content": result})
+                append_history_entries(session["id"], [{"role": "assistant", "content": result}])
                 remove_job_from_queue(session["id"], job_id)
                 continue
             if job.get("status") == "queued":
                 enqueue(job)
                 break
             if job.get("status") == "waiting_approval":
+                break
+            if job.get("status") == "paused":
                 break
 
 
@@ -65,9 +70,9 @@ def _drain_session_queue(session_id):
         if not job:
             remove_job_from_queue(session_id, job_id)
             continue
-        if job["status"] in {"done", "failed", "waiting_approval"}:
-            if job["status"] == "waiting_approval":
-                return
+        if job["status"] in {"waiting_approval", "paused"}:
+            return
+        if job["status"] in {"done", "failed"}:
             remove_job_from_queue(session_id, job_id)
             continue
         if job["status"] != "queued":
@@ -90,11 +95,32 @@ def _run_session_queue(session_id):
                     _start_worker_locked(session_id)
 
 
+def pause_job(job_id):
+    return request_job_pause(job_id)
+
+
+def resume_paused_job(job_id):
+    job = resume_stored_job(job_id)
+    if not job:
+        return None
+    session_id = job["sessionId"]
+    with WORKERS_LOCK:
+        if session_id in SESSION_WORKERS:
+            return job
+    job = update_job(job_id, {"status": "queued"})
+    if job:
+        enqueue(job)
+    return job
+
+
 def event(job_id, agent, message, data=None):
     add_job_event(job_id, {"agent": agent, "message": message, "data": data or {}})
 
 
 def process_job(job_id):
+    job = get_job(job_id)
+    if not job or job.get("status") == "paused":
+        return
     job = update_job(job_id, {"status": "running"})
     if not job:
         return
@@ -126,19 +152,47 @@ def process_job(job_id):
         "mode": normalize_mode(job["input"].get("mode")),
         "prompt": job["input"].get("prompt") or "",
         "selectedCode": job["input"].get("selectedCode") or "",
+        "selectedCodePath": job["input"].get("selectedCodePath") or "",
+        "browserUrl": job["input"].get("browserUrl") or "",
         "provider": provider,
         "model": model,
         "permissionMode": job["input"].get("permissionMode") or "safe_only",
     }
 
     try:
+        def wait_if_paused(_node=""):
+            while True:
+                current = get_job(job_id)
+                if not current or current.get("status") in {"done", "failed"}:
+                    return
+                if current.get("status") == "pausing" or current.get("pauseRequested"):
+                    update_job(job_id, {"status": "paused"})
+                    event(job_id, "system", "Paused at a safe step boundary.")
+                    continue
+                if current.get("status") == "paused":
+                    time.sleep(0.2)
+                    continue
+                return
+
+        def stream_token(token):
+            wait_if_paused("response")
+            append_job_stream(job_id, token)
+
+        def save_checkpoint(node, result):
+            events = result.get("events", []) if isinstance(result, dict) else []
+            latest = events[-1] if events else {}
+            summary = str(latest.get("message") or result.get("final_result") or node)[:240]
+            add_job_checkpoint(job_id, node, summary)
+
         event(job_id, "system", "Starting queued prompt.", {"agents": [agent["name"] for agent in AGENTS]})
         pending_approval = job.get("approval") if job.get("approvalGranted") else None
         graph_result = run_agent_graph(
             session,
             input_data,
             approval_state=pending_approval,
-            on_token=lambda token: append_job_stream(job_id, token),
+            on_token=stream_token,
+            on_checkpoint=save_checkpoint,
+            before_node=wait_if_paused,
         )
         for graph_event in graph_result.get("events", []):
             event(job_id, graph_event["agent"], graph_event["message"], graph_event.get("data"))
@@ -179,6 +233,7 @@ def process_job(job_id):
             "mode": input_data["mode"],
             "prompt": input_data["prompt"],
             "selectedCode": input_data["selectedCode"],
+            "selectedCodePath": input_data["selectedCodePath"],
         }, {"role": "assistant", "mode": input_data["mode"], "content": result}])
         update_job(job_id, {"status": "done", "result": result, "approval": None, "approvalGranted": False})
     except Exception as exc:
@@ -192,6 +247,7 @@ def process_job(job_id):
                 "mode": input_data["mode"],
                 "prompt": input_data["prompt"],
                 "selectedCode": input_data["selectedCode"],
+                "selectedCodePath": input_data["selectedCodePath"],
             }, {"role": "assistant", "mode": input_data["mode"], "content": failure}])
         except Exception:
             pass

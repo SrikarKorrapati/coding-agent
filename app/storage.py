@@ -83,6 +83,14 @@ def load_store():
         if settings.get("apiKey") and not settings["apiKeys"].get(legacy_provider):
             settings["apiKeys"][legacy_provider] = settings["apiKey"]
         merged["settings"] = settings
+        for session in merged.get("sessions", {}).values():
+            session.setdefault("historyArchive", [])
+            session.setdefault("memory", "")
+            session.setdefault("compactionSummary", "")
+            session.setdefault("queue", [])
+        for job in merged.get("jobs", {}).values():
+            job.setdefault("checkpoints", [])
+            job.setdefault("pauseRequested", False)
         return merged
 
 
@@ -110,6 +118,9 @@ def create_session(name="New Chat"):
         "createdAt": stamp,
         "updatedAt": stamp,
         "history": [],
+        "historyArchive": [],
+        "memory": "",
+        "compactionSummary": "",
         "queue": [],
     }
     store["sessions"][session["id"]] = session
@@ -184,18 +195,6 @@ def auto_name_session(session_id, prompt):
 
 
 @store_transaction
-def append_history(session_id, entry):
-    store = load_store()
-    session = store["sessions"].get(session_id)
-    if not session:
-        return None
-    session["history"].append({"id": str(uuid4()), "at": now_iso(), **entry})
-    session["updatedAt"] = now_iso()
-    save_store(store)
-    return session
-
-
-@store_transaction
 def append_history_entries(session_id, entries):
     """Append one prompt/response pair atomically to a chat transcript."""
     store = load_store()
@@ -223,6 +222,8 @@ def create_job(session_id, input_data):
         "input": input_data,
         "events": [],
         "result": None,
+        "pauseRequested": False,
+        "checkpoints": [],
         "createdAt": stamp,
         "updatedAt": stamp,
     }
@@ -250,6 +251,20 @@ def update_job(job_id, patch):
 
 
 @store_transaction
+def add_job_checkpoint(job_id, node, summary):
+    """Persist a small progress marker without copying source code or secrets."""
+    store = load_store()
+    job = store["jobs"].get(job_id)
+    if not job:
+        return None
+    checkpoint = {"at": now_iso(), "node": node, "summary": summary}
+    job.setdefault("checkpoints", []).append(checkpoint)
+    job["updatedAt"] = checkpoint["at"]
+    save_store(store)
+    return checkpoint
+
+
+@store_transaction
 def request_job_approval(job_id):
     """Atomically queue a paused job once the user approves its exact command batch."""
     store = load_store()
@@ -261,6 +276,81 @@ def request_job_approval(job_id):
     job["updatedAt"] = now_iso()
     save_store(store)
     return job
+
+
+@store_transaction
+def request_job_pause(job_id):
+    store = load_store()
+    job = store["jobs"].get(job_id)
+    if not job or job.get("status") not in {"queued", "running", "pausing", "paused"}:
+        return None
+    if job["status"] == "queued":
+        job["status"] = "paused"
+        job["resumeStatus"] = "queued"
+    elif job["status"] == "running":
+        job["status"] = "pausing"
+        job["pauseRequested"] = True
+        job["resumeStatus"] = "running"
+    job["updatedAt"] = now_iso()
+    save_store(store)
+    return job
+
+
+@store_transaction
+def resume_job(job_id):
+    store = load_store()
+    job = store["jobs"].get(job_id)
+    if not job or job.get("status") not in {"paused", "pausing"}:
+        return None
+    job["status"] = job.get("resumeStatus", "queued")
+    job["pauseRequested"] = False
+    job.pop("resumeStatus", None)
+    job["updatedAt"] = now_iso()
+    save_store(store)
+    return job
+
+
+@store_transaction
+def fork_session(session_id):
+    store = load_store()
+    parent = store["sessions"].get(session_id)
+    if not parent:
+        return None
+    stamp = now_iso()
+    session = {
+        "id": str(uuid4()),
+        "name": f"{parent.get('name', 'Chat')} (fork)",
+        "isAutoNamed": False,
+        "createdAt": stamp,
+        "updatedAt": stamp,
+        "history": deepcopy(parent.get("history", [])[-12:]),
+        "historyArchive": [],
+        "memory": parent.get("memory", ""),
+        "compactionSummary": parent.get("compactionSummary", ""),
+        "parentId": session_id,
+        "queue": [],
+    }
+    store["sessions"][session["id"]] = session
+    save_store(store)
+    return session
+
+
+@store_transaction
+def compact_session(session_id, summary, keep_last=12):
+    store = load_store()
+    session = store["sessions"].get(session_id)
+    if not session:
+        return None
+    history = session.get("history", [])
+    if len(history) <= keep_last:
+        return session
+    archived, recent = history[:-keep_last], history[-keep_last:]
+    session.setdefault("historyArchive", []).extend(archived)
+    session["history"] = recent
+    session["compactionSummary"] = str(summary)[:8_000]
+    session["updatedAt"] = now_iso()
+    save_store(store)
+    return session
 
 
 @store_transaction

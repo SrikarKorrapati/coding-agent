@@ -7,6 +7,7 @@ from app.agent_graph import (
     normalize_safety_assessment,
     route_after_browser_test,
     route_after_edit,
+    route_after_read_only,
     route_after_safety,
     run_agent_graph,
     safety_node,
@@ -37,7 +38,7 @@ class GraphTests(unittest.TestCase):
 
     def test_failed_local_site_check_is_reported_for_correction(self):
         state = {
-            "input": {"prompt": "Fix the page at http://localhost:5173"},
+            "input": {"mode": "agent", "prompt": "Fix the page at http://localhost:5173"},
             "session": {"settings": {"apiKey": ""}},
             "verification_results": [],
             "correction_attempts": 0,
@@ -49,7 +50,12 @@ class GraphTests(unittest.TestCase):
 
         self.assertTrue(result["needs_correction"])
         self.assertEqual(result["correction_attempts"], 1)
-        self.assertEqual(route_after_browser_test(result), "developer")
+        self.assertEqual(route_after_browser_test({**state, **result}), "developer")
+
+    def test_read_only_chat_can_request_a_local_browser_check(self):
+        state = {"browser_url": "http://localhost:4317", "input": {"mode": "ask"}}
+        self.assertEqual(route_after_read_only(state), "browserTester")
+        self.assertEqual(route_after_browser_test({"input": {"mode": "ask"}, "needs_correction": True}), "end")
 
     def test_ask_every_time_pauses_with_the_exact_commands_for_approval(self):
         command = {"command": "python3 -m unittest discover -s tests", "why": "Verify the change."}

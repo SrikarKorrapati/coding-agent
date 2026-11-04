@@ -68,6 +68,34 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(approved["approvalGranted"])
         self.assertIsNone(repeated)
 
+    def test_memory_compaction_fork_and_progress_checkpoints_persist(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            with patch.object(storage, "DATA_DIR", root), patch.object(storage, "STORE_PATH", root / "store.json"):
+                storage.ensure_store()
+                session = storage.create_session("Durable chat")
+                storage.update_session(session["id"], {"memory": "Keep answers concise."})
+                storage.append_history_entries(session["id"], [
+                    {"role": "user", "content": f"Message {index}"} for index in range(10)
+                ])
+                compacted = storage.compact_session(session["id"], "The user is building a local agent.", keep_last=4)
+                fork = storage.fork_session(session["id"])
+                job = storage.create_job(session["id"], {"prompt": "Continue"})
+                storage.add_job_checkpoint(job["id"], "planner", "Plan ready.")
+                storage.request_job_pause(job["id"])
+                paused = storage.get_job(job["id"])
+                resumed = storage.resume_job(job["id"])
+
+                self.assertEqual(len(compacted["history"]), 4)
+                self.assertEqual(len(compacted["historyArchive"]), 6)
+                self.assertEqual(compacted["memory"], "Keep answers concise.")
+                self.assertEqual(compacted["compactionSummary"], "The user is building a local agent.")
+                self.assertEqual(fork["parentId"], session["id"])
+                self.assertEqual(fork["memory"], compacted["memory"])
+                self.assertEqual(paused["status"], "paused")
+                self.assertEqual(resumed["status"], "queued")
+                self.assertEqual(len(storage.get_job(job["id"])["checkpoints"]), 1)
+
     def test_claude_uses_the_dedicated_langchain_adapter(self):
         with patch.object(llm, "ChatAnthropic") as chat_anthropic:
             llm.create_chat_model({

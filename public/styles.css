@@ -215,7 +215,7 @@ p {
 .workspace {
   grid-column: 3;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 0;
   height: 100vh;
   height: 100dvh;
@@ -460,6 +460,79 @@ p {
   background: transparent;
 }
 
+.chat-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px clamp(16px, 4vw, 44px) 0;
+}
+
+.chat-tools button,
+#jobControl,
+#saveMemory,
+#askAboutSelection {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.run-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-status {
+  width: fit-content;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #eeece7;
+}
+
+.workspace-status[data-status="running"] {
+  color: #155f3c;
+  background: #e7f5ec;
+}
+
+.workspace-status[data-status="queued"],
+.workspace-status[data-status="pausing"],
+.workspace-status[data-status="waiting_approval"] {
+  color: #85520a;
+  background: #fff3d8;
+}
+
+.workspace-status[data-status="paused"] {
+  color: #6541a5;
+  background: #f0eafb;
+}
+
+.workspace-status[data-status="failed"] {
+  color: #a32924;
+  background: #fdebea;
+}
+
+.session-memory {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.session-memory summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.session-memory textarea {
+  min-height: 64px;
+  margin-top: 8px;
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: none;
+}
+
+.session-memory span {
+  margin-left: 8px;
+}
+
 .selection-context {
   display: flex;
   align-items: center;
@@ -489,6 +562,15 @@ p {
   color: inherit;
   font-size: 18px;
   line-height: 1;
+}
+
+.selection-context #askAboutSelection {
+  width: auto;
+  height: auto;
+  border: 1px solid #e7c8bb;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .conversation {
@@ -570,6 +652,35 @@ p {
   gap: 2px;
 }
 
+.job-checkpoints,
+.memory-summary {
+  width: min(850px, 100%);
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.job-checkpoints summary,
+.memory-summary summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.job-checkpoints ol {
+  display: grid;
+  gap: 6px;
+  padding-left: 22px;
+}
+
+.job-checkpoints li {
+  padding-left: 3px;
+}
+
+.memory-summary p {
+  margin: 8px 0;
+  white-space: pre-wrap;
+}
+
 .activity-items strong {
   color: var(--ink);
   font-weight: 600;
@@ -601,7 +712,7 @@ p {
 
 .composer-options {
   display: grid;
-  grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1fr) minmax(220px, 280px) auto;
+  grid-template-columns: minmax(130px, 0.65fr) minmax(0, 1fr) minmax(180px, 250px) minmax(190px, 1fr) auto;
   align-items: end;
   gap: 8px;
 }
@@ -765,13 +876,6 @@ textarea {
   color: #263445;
 }
 
-.event {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px;
-  background: #fbfcfe;
-}
-
 .approval-card {
   display: grid;
   gap: 10px;
@@ -790,27 +894,6 @@ textarea {
   background: #fff;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.event strong {
-  display: block;
-  font-size: 13px;
-  margin-bottom: 4px;
-}
-
-.event pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  margin: 8px 0 0;
-  color: #344054;
-}
-
-.status-done {
-  color: var(--ok);
-}
-
-.status-failed {
-  color: #b42318;
 }
 
 @media (max-width: 1350px) and (min-width: 901px) {

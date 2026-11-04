@@ -46,14 +46,18 @@ function renderSessions(sessions) {
 
 function renderSession(session) {
   activeSession = session;
-  el("queueState").textContent = `${session.queue.length} queued prompt${session.queue.length === 1 ? "" : "s"}`;
-  el("conversation").innerHTML = session.history.map((item) => `
+  el("jobControl").hidden = true;
+  setAgentStatus(session.queue.length ? "queued" : "idle", session.queue.length ? `${session.queue.length} prompt${session.queue.length === 1 ? "" : "s"} queued` : "Agent is idle.");
+  el("sessionMemory").value = session.memory || "";
+  el("conversation").innerHTML = `${session.compactionSummary ? `<details class="memory-summary"><summary>Earlier chat summary</summary><p>${escapeHtml(session.compactionSummary)}</p></details>` : ""}${session.history.map((item) => `
     <article class="chat-message ${item.role === "user" ? "user-message" : "assistant-message"}">
       <strong>${item.role === "user" ? "You" : "Coding Agent"}${item.mode ? ` · ${escapeHtml(item.mode)}` : ""}</strong>
       <div class="message-body">${escapeHtml(item.content || item.prompt || "")}</div>
-      ${item.selectedCode ? `<details class="code-context"><summary>Selected code</summary><pre>${escapeHtml(item.selectedCode)}</pre></details>` : ""}
+      ${item.selectedCode ? `<details class="code-context"><summary>${escapeHtml(item.selectedCodePath || "Selected code")}</summary><pre>${escapeHtml(item.selectedCode)}</pre></details>` : ""}
     </article>
-  `).join("");
+  `).join("")}`;
+  el("compactSession").disabled = (session.history || []).length <= 8;
+  el("forkSession").disabled = false;
   scrollConversationToBottom();
 }
 
@@ -69,11 +73,13 @@ function appendJobMessages(job) {
   const input = job.input || {};
   const userText = input.prompt || "";
   const selectedCode = input.selectedCode || "";
+  const selectedCodePath = input.selectedCodePath || "";
   conversation.insertAdjacentHTML("beforeend", `
     <article class="chat-message user-message" data-user-job="${escapeHtml(job.id)}">
       <strong>You${input.mode ? ` · ${escapeHtml(input.mode)}` : ""}</strong>
       <div class="message-body">${escapeHtml(userText)}</div>
-      ${selectedCode ? `<details class="code-context"><summary>Selected code</summary><pre>${escapeHtml(selectedCode)}</pre></details>` : ""}
+      ${selectedCode ? `<details class="code-context"><summary>${escapeHtml(selectedCodePath || "Selected code")}</summary><pre>${escapeHtml(selectedCode)}</pre></details>` : ""}
+      ${input.browserUrl ? `<small>Browser check: ${escapeHtml(input.browserUrl)}</small>` : ""}
     </article>
     <article class="chat-message assistant-message" data-assistant-job="${escapeHtml(job.id)}">
       <strong>Coding Agent</strong>
@@ -146,8 +152,21 @@ function showView(view) {
 }
 
 function renderJob(job) {
-  const statusClass = job.status === "done" ? "status-done" : job.status === "failed" ? "status-failed" : "";
-  el("queueState").innerHTML = `Job <span class="${statusClass}">${job.status}</span>`;
+  const labels = {
+    queued: "Agent is queued…",
+    running: "Agent is working…",
+    pausing: "Pausing at the next safe step…",
+    paused: "Agent is paused.",
+    waiting_approval: "Waiting for your approval.",
+    done: "Agent finished.",
+    failed: "Agent stopped with an error."
+  };
+  setAgentStatus(job.status, labels[job.status] || `Agent status: ${job.status}`);
+  const canControl = ["queued", "running", "pausing", "paused"].includes(job.status);
+  el("jobControl").hidden = !canControl;
+  el("jobControl").dataset.action = job.status === "paused" ? "resume" : "pause";
+  el("jobControl").textContent = job.status === "paused" ? "Resume agent" : job.status === "pausing" ? "Pausing…" : "Pause agent";
+  el("jobControl").disabled = job.status === "pausing";
   appendJobMessages(job);
   const assistant = el("conversation").querySelector(`[data-assistant-job="${CSS.escape(job.id)}"]`);
   if (!assistant) return;
@@ -168,6 +187,15 @@ function renderJob(job) {
       <div><strong>${escapeHtml(item.agent)}</strong><span>${escapeHtml(item.message)}</span></div>
     `).join("");
   }
+  if (job.checkpoints?.length) {
+    let checkpoints = assistant.querySelector(".job-checkpoints");
+    if (!checkpoints) {
+      assistant.insertAdjacentHTML("beforeend", `<details class="job-checkpoints"><summary></summary><ol></ol></details>`);
+      checkpoints = assistant.querySelector(".job-checkpoints");
+    }
+    checkpoints.querySelector("summary").textContent = `Checkpoints · ${job.checkpoints.length}`;
+    checkpoints.querySelector("ol").innerHTML = job.checkpoints.map((item) => `<li><strong>${escapeHtml(item.node)}</strong> ${escapeHtml(item.summary)}</li>`).join("");
+  }
   const commands = job.approval?.developer_output?.commands || [];
   let approvalCard = assistant.querySelector(".approval-card");
   if (job.status === "waiting_approval" && !approvalCard) {
@@ -182,6 +210,12 @@ function renderJob(job) {
     approvalCard.remove();
   }
   scrollConversationToBottom();
+}
+
+function setAgentStatus(status, label) {
+  const statusEl = el("queueState");
+  statusEl.dataset.status = status;
+  statusEl.textContent = label;
 }
 
 function renderFiles(files) {
@@ -239,6 +273,13 @@ async function loadSessions() {
   }
   // Render the list before loading a session so a slow session request cannot hide the chats.
   renderSessions(sessions);
+  if (!sessions.length && !activeSession) {
+    el("conversation").innerHTML = "";
+    el("sessionMemory").value = "";
+    el("forkSession").disabled = true;
+    el("compactSession").disabled = true;
+    setAgentStatus("idle", "Agent is idle. Start a chat to begin.");
+  }
   if (!activeSession && sessions[0]) {
     el("queueState").textContent = "Loading latest chat…";
     try {
@@ -260,7 +301,7 @@ async function loadSession(id) {
   renderSessions(await api("/api/sessions"));
   for (const jobId of session.queue) {
     const job = await api(`/api/jobs/${jobId}`).catch(() => null);
-    if (job && ["queued", "running", "waiting_approval"].includes(job.status)) {
+    if (job && ["queued", "running", "pausing", "paused", "waiting_approval"].includes(job.status)) {
       activeJob = job.id;
       renderJob(job);
       pollJob();
@@ -367,6 +408,7 @@ async function sendPrompt() {
   const codeBlocks = [...rawPrompt.matchAll(/```[^\n]*\n([\s\S]*?)```/g)];
   const pastedCode = codeBlocks.map((match) => match[1].trim()).filter(Boolean).join("\n\n");
   const selectedCode = [selectedCodeContext, pastedCode].filter(Boolean).join("\n\n");
+  const selectedCodePath = selectedCodeContext ? openFilePath || "" : "";
   const prompt = rawPrompt.replace(/```[^\n]*\n[\s\S]*?```/g, " ").trim()
     || (selectedCode ? "Review the code in the provided context." : "");
   if (!prompt) return;
@@ -376,6 +418,8 @@ async function sendPrompt() {
       mode: activeMode,
       prompt,
       selectedCode,
+      selectedCodePath,
+      browserUrl: el("browserUrl").value.trim(),
       provider: el("promptProvider").value,
       model: el("promptModel").value,
       permissionMode: el("permissionMode").value
@@ -384,6 +428,7 @@ async function sendPrompt() {
   activeJob = job.id;
   renderJob(job);
   el("prompt").value = "";
+  el("browserUrl").value = "";
   clearSelectedCodeContext();
   pollJob();
 }
@@ -404,18 +449,90 @@ function captureSelectedCode() {
   el("selectionContext").hidden = false;
 }
 
+function askAboutSelection() {
+  if (!selectedCodeContext) return;
+  activeMode = "ask";
+  document.querySelectorAll("[data-mode]").forEach((node) => node.classList.toggle("selected", node.dataset.mode === "ask"));
+  el("prompt").value = `Explain this code from ${openFilePath || "the selected file"} and how it works.`;
+  el("prompt").focus();
+}
+
+async function forkActiveSession() {
+  if (!activeSession) return;
+  try {
+    const fork = await api(`/api/sessions/${activeSession.id}/fork`, { method: "POST" });
+    await loadSession(fork.id);
+    await loadSessions();
+  } catch (error) {
+    setAgentStatus("failed", `Could not fork chat: ${error.message}`);
+  }
+}
+
+async function compactActiveSession() {
+  if (!activeSession) return;
+  const button = el("compactSession");
+  button.disabled = true;
+  try {
+    setAgentStatus("running", "Compacting earlier messages…");
+    const result = await api(`/api/sessions/${activeSession.id}/compact`, { method: "POST" });
+    renderSession(result.session);
+    setAgentStatus("idle", result.message);
+  } catch (error) {
+    setAgentStatus("failed", `Compaction failed: ${error.message}`);
+  } finally {
+    button.disabled = (activeSession?.history || []).length <= 8;
+  }
+}
+
+async function saveSessionMemory() {
+  if (!activeSession) return;
+  try {
+    const updated = await api(`/api/sessions/${activeSession.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ memory: el("sessionMemory").value })
+    });
+    activeSession = updated;
+    el("memoryStatus").textContent = "Saved to this chat.";
+  } catch (error) {
+    el("memoryStatus").textContent = `Could not save: ${error.message}`;
+  }
+}
+
+async function controlActiveJob() {
+  if (!activeJob) return;
+  const action = el("jobControl").dataset.action;
+  el("jobControl").disabled = true;
+  try {
+    const job = await api(`/api/jobs/${activeJob}/${action}`, { method: "POST" });
+    renderJob(job);
+  } catch (error) {
+    el("jobControl").disabled = false;
+    setAgentStatus("failed", `Could not ${action} the agent: ${error.message}`);
+  }
+}
+
 async function pollJob() {
   if (!activeJob) return;
-  const job = await api(`/api/jobs/${activeJob}`);
-  renderJob(job);
-  if (job.status === "done" || job.status === "failed") {
+  const jobId = activeJob;
+  try {
+    const job = await api(`/api/jobs/${jobId}`);
+    if (activeJob !== jobId) return;
+    renderJob(job);
+    if (job.status === "done" || job.status === "failed") {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+      await loadSession(job.sessionId);
+      if (job.status === "failed" && !activeJob) setAgentStatus("failed", "Agent stopped with an error.");
+      await refreshWorkspace();
+      return;
+    }
+    pollTimer = setTimeout(pollJob, 350);
+  } catch (error) {
+    if (activeJob !== jobId) return;
     clearTimeout(pollTimer);
     pollTimer = null;
-    await loadSession(job.sessionId);
-    await refreshWorkspace();
-    return;
+    setAgentStatus("failed", `Could not read agent status: ${error.message}`);
   }
-  pollTimer = setTimeout(pollJob, 350);
 }
 
 function escapeHtml(value) {
@@ -455,6 +572,11 @@ el("promptProvider").addEventListener("change", () => {
   populateModelSelect(el("promptModel"), provider, "", true);
 });
 el("sendPrompt").addEventListener("click", sendPrompt);
+el("jobControl").addEventListener("click", controlActiveJob);
+el("forkSession").addEventListener("click", forkActiveSession);
+el("compactSession").addEventListener("click", compactActiveSession);
+el("saveMemory").addEventListener("click", saveSessionMemory);
+el("askAboutSelection").addEventListener("click", askAboutSelection);
 el("prompt").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();

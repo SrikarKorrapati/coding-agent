@@ -1,6 +1,7 @@
 import re
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path.cwd()
 COMMAND_TIMEOUT_SECONDS = 45
@@ -153,7 +154,10 @@ def read_workspace_file(file_path):
     return full.read_text(encoding="utf-8")
 
 
-def smoke_test_url(url):
+def smoke_test_url(url, actions=None):
+    """Inspect a local site and execute only a small, structured browser action list."""
+    if not re.match(r"^https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:/|$)", url):
+        return {"available": False, "ok": False, "error": "Browser access is limited to localhost websites."}
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -172,6 +176,13 @@ def smoke_test_url(url):
 
             try:
                 page = browser.new_page()
+                def keep_navigation_local(route):
+                    request = route.request
+                    if request.is_navigation_request() and urlsplit(request.url).hostname not in {"localhost", "127.0.0.1", "::1"}:
+                        route.abort()
+                    else:
+                        route.continue_()
+                page.route("**/*", keep_navigation_local)
                 page_errors = []
                 page.on("pageerror", lambda error: page_errors.append(str(error)))
                 try:
@@ -181,6 +192,30 @@ def smoke_test_url(url):
                         "() => document.documentElement.dataset.codingAgentReady !== 'false'",
                         timeout=5_000,
                     )
+                    completed_actions = []
+                    for action in (actions or [])[:8]:
+                        kind = action.get("action")
+                        if kind == "wait":
+                            duration = max(0, min(int(action.get("milliseconds", 500)), 3000))
+                            page.wait_for_timeout(duration)
+                            completed_actions.append({"action": kind, "milliseconds": duration})
+                            continue
+                        selector = str(action.get("selector") or "")[:200]
+                        if not selector:
+                            continue
+                        target = page.locator(selector).first
+                        if kind == "click":
+                            target.click(timeout=3000)
+                        elif kind == "fill":
+                            target.fill(str(action.get("value") or "")[:1000], timeout=3000)
+                        elif kind == "press":
+                            key = str(action.get("key") or "Enter")
+                            if key not in {"Enter", "Escape", "Tab", "ArrowDown", "ArrowUp"}:
+                                continue
+                            target.press(key, timeout=3000)
+                        else:
+                            continue
+                        completed_actions.append({"action": kind, "selector": selector})
                     body = page.locator("body").inner_text(timeout=5_000)
                     status = response.status if response else None
                     return {
@@ -191,6 +226,7 @@ def smoke_test_url(url):
                         "title": page.title(),
                         "headings": page.locator("h1:visible, h2:visible, h3:visible").all_text_contents()[:30],
                         "buttons": page.locator("button:visible").all_text_contents()[:40],
+                        "actions": completed_actions,
                         "text": body[:4000],
                         "pageErrors": page_errors,
                     }

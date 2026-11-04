@@ -41,6 +41,21 @@ class OrchestratorTests(unittest.TestCase):
         process.assert_not_called()
         self.assertEqual(session["queue"], ["job-1", "job-2"])
 
+    def test_session_worker_keeps_a_paused_job_in_its_queue(self):
+        session = {"id": "session-1", "queue": ["job-1", "job-2"]}
+        jobs = {
+            "job-1": {"id": "job-1", "status": "paused"},
+            "job-2": {"id": "job-2", "status": "queued"},
+        }
+
+        with patch.object(orchestrator, "get_session", return_value=session), patch.object(
+            orchestrator, "get_job", side_effect=lambda job_id: jobs.get(job_id)
+        ), patch.object(orchestrator, "process_job") as process:
+            orchestrator._drain_session_queue("session-1")
+
+        process.assert_not_called()
+        self.assertEqual(session["queue"], ["job-1", "job-2"])
+
 
 if __name__ == "__main__":
     unittest.main()

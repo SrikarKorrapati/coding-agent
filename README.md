@@ -44,9 +44,13 @@ The selected mode controls whether the agents may edit files: Ask and Plan are r
 
 Plan replies include numbered steps with verification notes. Follow up in the same chat to revise a plan; the Planner uses recent conversation context.
 
-The Home view has one prompt box. Select code in the file viewer or paste it into a fenced block in the same prompt; the app sends it to the agents as selected-code context.
+The Home view has one prompt box. Select code in the file viewer and choose **Ask about selection** to add its path and text to a read-only question. You can also paste code in a fenced block.
 
-For a browser check, include the locally served URL in the prompt, such as `http://localhost:5173`. The Browser Tester opens it in headless Chromium, inspects the rendered page, and can route a failed check back to the Developer for a correction pass.
+The status at the bottom of the chat clearly shows when the agent is idle, queued, working, pausing, paused, or waiting for approval. Pause takes effect at the next model or tool boundary; Resume continues the current job. The agent records small workflow checkpoints and shows them under the response.
+
+Each chat can keep editable long-term memory. **Compact chat** summarizes older messages, keeps the recent messages in the transcript, and archives the full older history. **Fork chat** starts a separate persistent chat with the current context and memory.
+
+To give the agent browser access, enter a local site such as `http://localhost:5173` in **Browser URL**. The Browser Tester uses headless Chromium to inspect the rendered page, and can perform a small set of requested clicks, fills, or key presses. Browser navigation is restricted to localhost; a failed check in Debug or Agent mode can return to Developer for a correction pass.
 
 ## Models
 
