@@ -55,16 +55,32 @@ def create_chat_model(settings):
     )
 
 
-def call_agent(settings, agent, prompt, response_format="text"):
+def call_agent(settings, agent, prompt, response_format="text", on_token=None):
     if not settings.get("apiKey"):
         return {"ok": False, "content": "No API key configured. Using local fallback behavior.", "json": None}
     try:
         model = create_chat_model(settings)
-        response = model.invoke([
+        messages = [
             SystemMessage(content=f"{SYSTEM_PROMPT}\n\nYou are the {agent['name']} AI agent.\nYour responsibility: {agent['goal']}"),
             HumanMessage(content=prompt),
-        ])
-        content = _content_to_text(response.content)
+        ]
+        if on_token:
+            content_parts = []
+            try:
+                for chunk in model.stream(messages):
+                    text = _content_to_text(chunk.content)
+                    if text:
+                        content_parts.append(text)
+                        on_token(text)
+            except Exception:
+                if content_parts:
+                    raise
+                response = model.invoke(messages)
+                content_parts.append(_content_to_text(response.content))
+            content = "".join(content_parts)
+        else:
+            response = model.invoke(messages)
+            content = _content_to_text(response.content)
         return {
             "ok": True,
             "content": content,

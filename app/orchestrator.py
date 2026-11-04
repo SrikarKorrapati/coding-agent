@@ -5,7 +5,9 @@ from app.agent_graph import run_agent_graph
 from app.model_catalog import PROVIDERS, default_model_for, normalize_provider
 from app.storage import (
     add_job_event,
+    append_job_stream,
     append_history,
+    append_history_entries,
     auto_name_session,
     get_job,
     get_session,
@@ -106,10 +108,13 @@ def process_job(job_id):
     model = job["input"].get("model") or (
         settings.get("model") if provider == settings.get("provider") else default_model_for(provider)
     )
-    api_key = (settings.get("apiKeys") or {}).get(provider)
+    api_key_enabled = (settings.get("apiKeyEnabled") or {}).get(provider, True)
+    api_key = (settings.get("apiKeys") or {}).get(provider) if api_key_enabled else ""
     if not api_key and provider == settings.get("provider"):
-        api_key = settings.get("apiKey", "")
-    base_url = settings.get("baseUrl") if provider == settings.get("provider") else PROVIDERS[provider]["baseUrl"]
+        api_key = settings.get("apiKey", "") if api_key_enabled else ""
+    base_url = PROVIDERS[provider]["baseUrl"]
+    if provider == "openai" and settings.get("baseUrlOverrideEnabled"):
+        base_url = settings.get("baseUrl") or base_url
     session["settings"] = {
         **settings,
         "provider": provider,
@@ -129,7 +134,12 @@ def process_job(job_id):
     try:
         event(job_id, "system", "Starting queued prompt.", {"agents": [agent["name"] for agent in AGENTS]})
         pending_approval = job.get("approval") if job.get("approvalGranted") else None
-        graph_result = run_agent_graph(session, input_data, approval_state=pending_approval)
+        graph_result = run_agent_graph(
+            session,
+            input_data,
+            approval_state=pending_approval,
+            on_token=lambda token: append_job_stream(job_id, token),
+        )
         for graph_event in graph_result.get("events", []):
             event(job_id, graph_event["agent"], graph_event["message"], graph_event.get("data"))
 
@@ -154,17 +164,28 @@ def process_job(job_id):
 
         result = graph_result.get("final_result") or "The agent graph completed without a final message."
         auto_name_session(session["id"], input_data["prompt"])
-        append_history(session["id"], {
+        append_history_entries(session["id"], [{
             "role": "user",
             "mode": input_data["mode"],
             "prompt": input_data["prompt"],
             "selectedCode": input_data["selectedCode"],
-        })
-        append_history(session["id"], {"role": "assistant", "mode": input_data["mode"], "content": result})
+        }, {"role": "assistant", "mode": input_data["mode"], "content": result}])
         update_job(job_id, {"status": "done", "result": result, "approval": None, "approvalGranted": False})
     except Exception as exc:
-        event(job_id, "system", "Job failed.", {"error": str(exc)})
-        update_job(job_id, {"status": "failed", "result": str(exc), "approval": None, "approvalGranted": False})
+        failure = str(exc)
+        event(job_id, "system", "Job failed.", {"error": failure})
+        # Keep failed prompts and their final error visible in the persisted chat transcript.
+        try:
+            auto_name_session(session["id"], input_data["prompt"])
+            append_history_entries(session["id"], [{
+                "role": "user",
+                "mode": input_data["mode"],
+                "prompt": input_data["prompt"],
+                "selectedCode": input_data["selectedCode"],
+            }, {"role": "assistant", "mode": input_data["mode"], "content": failure}])
+        except Exception:
+            pass
+        update_job(job_id, {"status": "failed", "result": failure, "approval": None, "approvalGranted": False})
     finally:
         if not waiting_for_approval:
             remove_job_from_queue(job["sessionId"], job_id)

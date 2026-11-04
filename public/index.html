@@ -31,6 +31,7 @@
       </aside>
 
       <section class="workspace">
+        <section id="conversation" class="conversation" aria-live="polite" aria-label="Conversation"></section>
         <section class="composer">
           <p id="queueState" class="workspace-status">Create a session to begin.</p>
           <div class="mode-row" id="modes">
@@ -40,9 +41,12 @@
             <button data-mode="agent">Agent</button>
           </div>
 
-          <label>Prompt
-            <textarea id="prompt" rows="9" placeholder="Ask a question or describe a task. Paste code inside a fenced block to include it as context."></textarea>
-          </label>
+          <label class="sr-only" for="prompt">Message</label>
+          <div id="selectionContext" class="selection-context" hidden>
+            <span id="selectionContextLabel"></span>
+            <button id="clearSelectionContext" type="button" aria-label="Remove selected code">×</button>
+          </div>
+          <textarea id="prompt" rows="4" aria-label="Message" placeholder="Message Coding Agent… Select code in the file viewer or paste a code block for context."></textarea>
 
           <div class="composer-options">
             <label>Provider
@@ -58,20 +62,10 @@
                 <option value="approve_all">Approve everything</option>
               </select>
             </label>
-            <button id="sendPrompt" class="primary">Queue prompt</button>
+            <button id="sendPrompt" class="primary">Send</button>
           </div>
         </section>
 
-        <section class="split">
-          <div>
-            <h3>Agent timeline</h3>
-            <div id="timeline" class="timeline"></div>
-          </div>
-          <div>
-            <h3>Session history</h3>
-            <div id="history" class="history"></div>
-          </div>
-        </section>
       </section>
 
       <section id="settingsPage" class="settings-page" hidden>
@@ -92,34 +86,62 @@
             <label>Model
               <select id="model"></select>
             </label>
-            <label>Base URL
-              <input id="baseUrl" autocomplete="url" placeholder="https://api.example.com/v1">
-            </label>
           </div>
         </section>
 
-        <section class="settings-card api-keys-card">
-          <div class="keys-heading">
-            <div>
-              <h3>API keys</h3>
-              <p>Keys are stored locally and shared across chats.</p>
+        <section class="provider-settings" aria-label="Provider API keys">
+          <article class="provider-settings-section">
+            <header>
+              <h3>OpenAI API Key</h3>
+              <p>You can put in <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">your OpenAI key</a> to use OpenAI models at cost.</p>
+            </header>
+            <div class="provider-settings-card">
+              <label class="provider-api-key-row" for="apiKeyOpenai">
+                <span>API Key</span>
+                <input id="apiKeyOpenai" type="password" autocomplete="off" placeholder="Enter API key">
+              </label>
+              <div class="provider-setting-row">
+                <div><strong>Use OpenAI API Key</strong><small id="openaiKeyStatus">No key saved</small></div>
+                <label class="switch-label" aria-label="Use OpenAI API Key"><input id="enableOpenaiKey" type="checkbox" role="switch"><span class="switch"></span></label>
+              </div>
+              <div class="provider-setting-row">
+                <div><strong>Override OpenAI Base URL</strong><small>Change the base URL for OpenAI API requests.</small></div>
+                <label class="switch-label" aria-label="Override OpenAI Base URL"><input id="overrideOpenaiBaseUrl" type="checkbox" role="switch"><span class="switch"></span></label>
+              </div>
+              <label id="openaiBaseUrlRow" class="provider-api-key-row base-url-row" hidden>
+                <span>Base URL</span>
+                <input id="openaiBaseUrl" autocomplete="url" placeholder="https://api.openai.com/v1">
+              </label>
             </div>
-          </div>
+          </article>
 
-          <div class="provider-key-list">
-            <label class="provider-key-row">
-              <span class="provider-key-name"><strong>Google Gemini</strong><small>Gemini API key</small></span>
-              <input id="apiKeyGoogle" type="password" autocomplete="off" placeholder="Enter Gemini API key">
-            </label>
-            <label class="provider-key-row">
-              <span class="provider-key-name"><strong>OpenAI</strong><small>OpenAI API key</small></span>
-              <input id="apiKeyOpenai" type="password" autocomplete="off" placeholder="Enter OpenAI API key">
-            </label>
-            <label class="provider-key-row">
-              <span class="provider-key-name"><strong>Claude</strong><small>Anthropic API key</small></span>
-              <input id="apiKeyAnthropic" type="password" autocomplete="off" placeholder="Enter Claude API key">
-            </label>
-          </div>
+          <article class="provider-settings-section">
+            <header>
+              <h3>Anthropic API Key</h3>
+              <p>You can put in <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">your Anthropic key</a> to use Claude at cost. When enabled, this key will be used for Claude models.</p>
+            </header>
+            <div class="provider-settings-card">
+              <label class="provider-api-key-row" for="apiKeyAnthropic"><span>API Key</span><input id="apiKeyAnthropic" type="password" autocomplete="off" placeholder="Enter API key"></label>
+              <div class="provider-setting-row">
+                <div><strong>Use Anthropic API Key</strong><small id="anthropicKeyStatus">No key saved</small></div>
+                <label class="switch-label" aria-label="Use Anthropic API Key"><input id="enableAnthropicKey" type="checkbox" role="switch"><span class="switch"></span></label>
+              </div>
+            </div>
+          </article>
+
+          <article class="provider-settings-section">
+            <header>
+              <h3>Google API Key</h3>
+              <p>You can put in <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">your Google AI Studio key</a> to use Google models at cost.</p>
+            </header>
+            <div class="provider-settings-card">
+              <label class="provider-api-key-row" for="apiKeyGoogle"><span>API Key</span><input id="apiKeyGoogle" type="password" autocomplete="off" placeholder="Enter API key"></label>
+              <div class="provider-setting-row">
+                <div><strong>Use Google API Key</strong><small id="googleKeyStatus">No key saved</small></div>
+                <label class="switch-label" aria-label="Use Google API Key"><input id="enableGoogleKey" type="checkbox" role="switch"><span class="switch"></span></label>
+              </div>
+            </div>
+          </article>
 
           <details class="other-provider-key">
             <summary>Other OpenAI-compatible providers</summary>

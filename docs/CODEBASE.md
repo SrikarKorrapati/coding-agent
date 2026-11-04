@@ -6,11 +6,12 @@ This project is a minimal Python local coding agent. It keeps the implementation
 
 - LangChain Python model calls through `ChatOpenAI` and `ChatAnthropic`.
 - LangGraph Python orchestration through `StateGraph`.
-- Persistent chats with shared provider API keys and defaults.
+- Persistent chats with shared provider API keys, per-key enable switches, and model defaults.
 - Provider-aware model lists in the UI.
 - Persistent prompt queues processed in FIFO order per session.
 - Four modes: Ask, Plan, Debug, and Agent.
-- AI agent nodes for Planner, Developer, Safety, Reviewer, Tester, Browser Tester, and Deployer.
+- Chat-style transcript with live streamed assistant replies.
+- AI agent nodes for Planner, Developer, Safety, Reviewer, Tester, Browser Tester, and Deployer; the Tester evaluates command evidence and sends supported failures back for correction.
 - File creation and modification through bash commands.
 - Selected-code context pasted into the prompt composer.
 - One prompt box that extracts fenced code blocks as selected-code context.
@@ -31,13 +32,13 @@ This project is a minimal Python local coding agent. It keeps the implementation
 - `app/tools.py`: Workspace-safe bash execution, file listing, file reading, git diff summary, and Chromium page checks.
 - `public/index.html`: Minimal UI structure and Home/Settings navigation.
 - `public/styles.css`: UI styling.
-- `public/app.js`: Browser-side session, settings, prompt queue, model dropdown, and polling logic.
+- `public/app.js`: Browser-side session, settings, prompt queue, model dropdown, code selection context, live transcript updates, and polling logic.
 - `tests/`: Python `unittest` coverage for core behavior, permissions, and LangGraph compilation.
 
 ## Runtime Flow
 
 1. The user creates or selects a chat.
-2. The user chooses a mode, writes one prompt, optionally includes code in a fenced block, selects provider/model/permissions, then queues it.
+2. The user chooses a mode, writes one prompt, optionally selects code in the file viewer or includes code in a fenced block, selects provider/model/permissions, then queues it.
 3. The server creates a job and adds it to the session queue.
 4. `orchestrator.py` drains each session queue in FIFO order; an approval-pending job pauses later prompts for that session, and saved queued prompts resume when the server starts again.
 5. The job enters `agent_graph.py`, a LangGraph `StateGraph`.
@@ -45,9 +46,9 @@ This project is a minimal Python local coding agent. It keeps the implementation
 7. Ask and Plan modes route to read-only workspace and reviewer nodes.
 8. Debug and Agent modes route to Developer, Safety, bash tool, Reviewer, Tester, Browser Tester, and Deployer nodes.
 9. Safety combines the AI Safety agent's assessment with deterministic risk heuristics before applying the selected permission mode. “Ask every time” pauses the job with the exact command batch until the user approves it.
-10. If verification fails, LangGraph routes back to Developer for a corrective pass.
+10. Tester runs requested verification commands and reviews their results with the AI Tester. If either reports a supported failure, LangGraph routes back to Developer for a corrective pass.
 11. If a localhost URL is mentioned, Browser Tester opens it in headless Chromium, collects rendered page evidence, and can route failures back to Developer.
-12. The final answer and all graph events are stored in session history and job events.
+12. Text replies stream from LangChain into the job record while the UI polls; the final answer and graph events are also stored in session history and job events.
 
 ## API Routes
 

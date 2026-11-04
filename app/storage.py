@@ -24,6 +24,12 @@ EMPTY_STORE = {
             "openai": "",
             "anthropic": "",
         },
+        "apiKeyEnabled": {
+            "google": True,
+            "openai": True,
+            "anthropic": True,
+        },
+        "baseUrlOverrideEnabled": False,
     },
     "sessions": {},
     "jobs": {},
@@ -63,7 +69,17 @@ def load_store():
         merged.update(store)
         settings = {**EMPTY_STORE["settings"], **(migrated_settings or {})}
         settings["apiKeys"] = {**EMPTY_STORE["settings"]["apiKeys"], **(migrated_settings or {}).get("apiKeys", {})}
+        settings["apiKeyEnabled"] = {
+            **EMPTY_STORE["settings"]["apiKeyEnabled"],
+            **(migrated_settings or {}).get("apiKeyEnabled", {}),
+        }
         legacy_provider = normalize_provider(settings.get("provider"))
+        if "baseUrlOverrideEnabled" not in (migrated_settings or {}):
+            settings["baseUrlOverrideEnabled"] = bool(
+                legacy_provider == "openai"
+                and settings.get("baseUrl")
+                and settings["baseUrl"].rstrip("/") != "https://api.openai.com/v1"
+            )
         if settings.get("apiKey") and not settings["apiKeys"].get(legacy_provider):
             settings["apiKeys"][legacy_provider] = settings["apiKey"]
         merged["settings"] = settings
@@ -180,6 +196,20 @@ def append_history(session_id, entry):
 
 
 @store_transaction
+def append_history_entries(session_id, entries):
+    """Append one prompt/response pair atomically to a chat transcript."""
+    store = load_store()
+    session = store["sessions"].get(session_id)
+    if not session:
+        return None
+    stamp = now_iso()
+    session["history"].extend({"id": str(uuid4()), "at": stamp, **entry} for entry in entries)
+    session["updatedAt"] = stamp
+    save_store(store)
+    return session
+
+
+@store_transaction
 def create_job(session_id, input_data):
     store = load_store()
     session = store["sessions"].get(session_id)
@@ -240,6 +270,19 @@ def add_job_event(job_id, event):
     if not job:
         return None
     job["events"].append({"id": str(uuid4()), "at": now_iso(), **event})
+    job["updatedAt"] = now_iso()
+    save_store(store)
+    return job
+
+
+@store_transaction
+def append_job_stream(job_id, text):
+    """Persist streamed answer text so the chat UI can render it during a model call."""
+    store = load_store()
+    job = store["jobs"].get(job_id)
+    if not job:
+        return None
+    job["stream"] = job.get("stream", "") + text
     job["updatedAt"] = now_iso()
     save_store(store)
     return job

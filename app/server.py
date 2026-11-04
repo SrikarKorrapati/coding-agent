@@ -113,7 +113,9 @@ class Handler(SimpleHTTPRequestHandler):
                 session = update_session(session_id, self.read_json())
                 return self.send_json(200, session) if session else self.send_json(404, {"error": "Session not found"})
             if method == "DELETE":
-                return self.send_json(200, {"ok": True}) if delete_session(session_id) else self.send_json(404, {"error": "Session not found"})
+                # Deleting an already-removed chat is harmless; this makes retries safe.
+                delete_session(session_id)
+                return self.send_json(200, {"ok": True})
 
         if len(parts) == 4 and parts[:2] == ["api", "sessions"] and parts[3] == "prompts" and method == "POST":
             job = create_job(parts[2], self.read_json())

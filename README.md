@@ -42,7 +42,7 @@ python3 -m unittest discover -s tests
 
 The selected mode controls whether the agents may edit files: Ask and Plan are read-only; Debug and Agent can make changes. Use Ask for generated snippets or explanations.
 
-The Home view has one prompt box. To ask about a code selection, paste it into a fenced block in the same prompt; the app sends that block to the agents as selected-code context.
+The Home view has one prompt box. Select code in the file viewer or paste it into a fenced block in the same prompt; the app sends it to the agents as selected-code context.
 
 For a browser check, include the locally served URL in the prompt, such as `http://localhost:5173`. The Browser Tester opens it in headless Chromium, inspects the rendered page, and can route a failed check back to the Developer for a correction pass.
 
@@ -62,6 +62,6 @@ The file panel counts added and deleted lines for tracked changes, including sta
 
 The app stores shared API settings in `work/agent-data/store.json`.
 
-- Use the Settings button in the left rail to set the default provider and model, and manage separate Gemini, OpenAI, and Claude API keys.
+- Use the Settings button in the left rail to set the default provider and model, and manage separate OpenAI, Anthropic, and Google API keys. Each key can be enabled independently; OpenAI also has an optional base URL override.
 - Groq, Mistral, and OpenRouter can use the optional key field under “Other OpenAI-compatible providers.”
 - API keys are stored locally for this prototype. For serious use, move keys to encrypted storage or environment variables.

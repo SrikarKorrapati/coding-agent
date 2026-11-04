@@ -7,6 +7,7 @@ let openFilePath = null;
 let modelCatalog = {};
 let editingDefaultProvider = "openai";
 let otherProviderKeyDrafts = {};
+let selectedCodeContext = "";
 const CORE_KEY_PROVIDERS = ["google", "openai", "anthropic"];
 
 const el = (id) => document.getElementById(id);
@@ -20,7 +21,11 @@ async function api(path, options = {}) {
     }
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Request failed");
+  if (!response.ok) {
+    const error = new Error(data.error || "Request failed");
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 
@@ -42,12 +47,41 @@ function renderSessions(sessions) {
 function renderSession(session) {
   activeSession = session;
   el("queueState").textContent = `${session.queue.length} queued prompt${session.queue.length === 1 ? "" : "s"}`;
-  el("history").innerHTML = session.history.slice().reverse().map((item) => `
-    <article class="message">
-      <strong>${escapeHtml(item.role)}${item.mode ? ` · ${escapeHtml(item.mode)}` : ""}</strong>
-      <pre>${escapeHtml(item.content || item.prompt || "")}</pre>
+  el("conversation").innerHTML = session.history.map((item) => `
+    <article class="chat-message ${item.role === "user" ? "user-message" : "assistant-message"}">
+      <strong>${item.role === "user" ? "You" : "Coding Agent"}${item.mode ? ` · ${escapeHtml(item.mode)}` : ""}</strong>
+      <div class="message-body">${escapeHtml(item.content || item.prompt || "")}</div>
+      ${item.selectedCode ? `<details class="code-context"><summary>Selected code</summary><pre>${escapeHtml(item.selectedCode)}</pre></details>` : ""}
     </article>
   `).join("");
+  scrollConversationToBottom();
+}
+
+function scrollConversationToBottom() {
+  const conversation = el("conversation");
+  conversation.scrollTop = conversation.scrollHeight;
+}
+
+function appendJobMessages(job) {
+  const conversation = el("conversation");
+  const selector = `[data-assistant-job="${CSS.escape(job.id)}"]`;
+  if (conversation.querySelector(selector)) return;
+  const input = job.input || {};
+  const userText = input.prompt || "";
+  const selectedCode = input.selectedCode || "";
+  conversation.insertAdjacentHTML("beforeend", `
+    <article class="chat-message user-message" data-user-job="${escapeHtml(job.id)}">
+      <strong>You${input.mode ? ` · ${escapeHtml(input.mode)}` : ""}</strong>
+      <div class="message-body">${escapeHtml(userText)}</div>
+      ${selectedCode ? `<details class="code-context"><summary>Selected code</summary><pre>${escapeHtml(selectedCode)}</pre></details>` : ""}
+    </article>
+    <article class="chat-message assistant-message" data-assistant-job="${escapeHtml(job.id)}">
+      <strong>Coding Agent</strong>
+      <div class="message-body">${escapeHtml(job.stream || "")}</div>
+      <small class="message-status">${escapeHtml(job.status === "waiting_approval" ? "Waiting for your approval" : "Thinking…")}</small>
+    </article>
+  `);
+  scrollConversationToBottom();
 }
 
 function renderSettings(settings) {
@@ -56,11 +90,31 @@ function renderSettings(settings) {
   otherProviderKeyDrafts = { ...(settings.apiKeys || {}) };
   populateProviderSelect(el("provider"), settings.provider || "openai");
   populateModelSelect(el("model"), el("provider").value, settings.model);
-  el("baseUrl").value = settings.baseUrl || modelCatalog[settings.provider]?.baseUrl || "";
   const apiKeys = settings.apiKeys || {};
-  el("apiKeyGoogle").value = apiKeys.google || (settings.provider === "google" ? settings.apiKey || "" : "");
-  el("apiKeyOpenai").value = apiKeys.openai || (settings.provider === "openai" ? settings.apiKey || "" : "");
-  el("apiKeyAnthropic").value = apiKeys.anthropic || (settings.provider === "anthropic" ? settings.apiKey || "" : "");
+  const apiKeyEnabled = settings.apiKeyEnabled || {};
+  const savedKeys = {
+    google: apiKeys.google || (settings.provider === "google" ? settings.apiKey || "" : ""),
+    openai: apiKeys.openai || (settings.provider === "openai" ? settings.apiKey || "" : ""),
+    anthropic: apiKeys.anthropic || (settings.provider === "anthropic" ? settings.apiKey || "" : "")
+  };
+  el("apiKeyGoogle").value = savedKeys.google;
+  el("apiKeyOpenai").value = savedKeys.openai;
+  el("apiKeyAnthropic").value = savedKeys.anthropic;
+  ["google", "openai", "anthropic"].forEach((provider) => {
+    const checked = Boolean(savedKeys[provider]) && (apiKeyEnabled[provider] ?? true);
+    el(`enable${provider[0].toUpperCase()}${provider.slice(1)}Key`).checked = checked;
+    el(`${provider}KeyStatus`).textContent = savedKeys[provider] ? "Secret saved" : "No key saved";
+  });
+  const openaiDefaultUrl = modelCatalog.openai?.baseUrl || "https://api.openai.com/v1";
+  const hasBaseUrlOverrideFlag = typeof settings.baseUrlOverrideEnabled === "boolean";
+  const baseUrlOverrideEnabled = hasBaseUrlOverrideFlag
+    ? settings.baseUrlOverrideEnabled
+    : Boolean(settings.provider === "openai" && settings.baseUrl && settings.baseUrl !== openaiDefaultUrl);
+  el("overrideOpenaiBaseUrl").checked = baseUrlOverrideEnabled;
+  el("openaiBaseUrl").value = settings.baseUrlOverrideEnabled || settings.provider === "openai"
+    ? settings.baseUrl || openaiDefaultUrl
+    : openaiDefaultUrl;
+  el("openaiBaseUrlRow").hidden = !baseUrlOverrideEnabled;
   el("apiKeyOther").value = CORE_KEY_PROVIDERS.includes(settings.provider)
     ? ""
     : apiKeys[settings.provider] || settings.apiKey || "";
@@ -94,21 +148,40 @@ function showView(view) {
 function renderJob(job) {
   const statusClass = job.status === "done" ? "status-done" : job.status === "failed" ? "status-failed" : "";
   el("queueState").innerHTML = `Job <span class="${statusClass}">${job.status}</span>`;
+  appendJobMessages(job);
+  const assistant = el("conversation").querySelector(`[data-assistant-job="${CSS.escape(job.id)}"]`);
+  if (!assistant) return;
+  const body = assistant.querySelector(".message-body");
+  if (["done", "failed"].includes(job.status)) body.textContent = job.result || job.stream || "";
+  else if (job.stream) body.textContent = job.stream;
+  else if (job.status === "waiting_approval") body.textContent = job.result || "";
+  const latestEvent = job.events?.at(-1);
+  assistant.querySelector(".message-status").textContent = latestEvent?.message || job.status;
+  if (job.events?.length) {
+    let activity = assistant.querySelector(".agent-activity");
+    if (!activity) {
+      assistant.insertAdjacentHTML("beforeend", `<details class="agent-activity"><summary></summary><div class="activity-items"></div></details>`);
+      activity = assistant.querySelector(".agent-activity");
+    }
+    activity.querySelector("summary").textContent = `Agent activity · ${job.events.length} steps`;
+    activity.querySelector(".activity-items").innerHTML = job.events.map((item) => `
+      <div><strong>${escapeHtml(item.agent)}</strong><span>${escapeHtml(item.message)}</span></div>
+    `).join("");
+  }
   const commands = job.approval?.developer_output?.commands || [];
-  const approval = job.status === "waiting_approval" ? `
-    <section class="approval-card">
+  let approvalCard = assistant.querySelector(".approval-card");
+  if (job.status === "waiting_approval" && !approvalCard) {
+    assistant.insertAdjacentHTML("beforeend", `
+      <section class="approval-card">
       <strong>Review commands before they run</strong>
       <pre>${escapeHtml(commands.map((item) => `${item.command}${item.why ? `  # ${item.why}` : ""}`).join("\n"))}</pre>
       <button class="primary" data-approve-job="${escapeHtml(job.id)}">Approve and run commands</button>
-    </section>
-  ` : "";
-  el("timeline").innerHTML = approval + job.events.map((event) => `
-    <article class="event">
-      <strong>${escapeHtml(event.agent)} · ${new Date(event.at).toLocaleTimeString()}</strong>
-      <div>${escapeHtml(event.message)}</div>
-      ${Object.keys(event.data || {}).length ? `<pre>${escapeHtml(JSON.stringify(event.data, null, 2))}</pre>` : ""}
-    </article>
-  `).join("");
+      </section>
+    `);
+  } else if (job.status !== "waiting_approval" && approvalCard) {
+    approvalCard.remove();
+  }
+  scrollConversationToBottom();
 }
 
 function renderFiles(files) {
@@ -142,6 +215,7 @@ async function refreshWorkspace() {
 }
 
 async function openFile(path, updateSelection = true) {
+  if (path !== openFilePath) clearSelectedCodeContext();
   openFilePath = path;
   const file = await api(`/api/file?path=${encodeURIComponent(path)}`);
   el("openFileName").textContent = path;
@@ -179,7 +253,8 @@ async function loadSession(id) {
   clearTimeout(pollTimer);
   pollTimer = null;
   activeJob = null;
-  el("timeline").innerHTML = "";
+  clearSelectedCodeContext();
+  el("conversation").innerHTML = "";
   const session = await api(`/api/sessions/${id}`);
   renderSession(session);
   renderSessions(await api("/api/sessions"));
@@ -220,8 +295,14 @@ async function saveSettings() {
       body: JSON.stringify({
         apiKey: CORE_KEY_PROVIDERS.includes(provider) ? "" : apiKeyOther,
         apiKeys,
+        apiKeyEnabled: {
+          google: el("enableGoogleKey").checked,
+          openai: el("enableOpenaiKey").checked,
+          anthropic: el("enableAnthropicKey").checked
+        },
         provider,
-        baseUrl: el("baseUrl").value.trim() || modelCatalog[provider]?.baseUrl || masterSettings.baseUrl,
+        baseUrl: el("openaiBaseUrl").value.trim() || modelCatalog.openai?.baseUrl || "https://api.openai.com/v1",
+        baseUrlOverrideEnabled: el("overrideOpenaiBaseUrl").checked,
         model: el("model").value
       })
     });
@@ -250,22 +331,33 @@ async function renameSessionById(sessionId) {
   }
 }
 
-async function deleteSessionById(sessionId) {
-  const session = sessionId === activeSession?.id ? activeSession : await api(`/api/sessions/${sessionId}`);
-  if (!session) return;
-  const ok = confirm(`Delete "${session.name}"? This removes the chat history and queued jobs.`);
-  if (!ok) return;
+async function deleteSessionById(sessionId, button) {
+  if (button) button.disabled = true;
   try {
+    const session = sessionId === activeSession?.id ? activeSession : await api(`/api/sessions/${sessionId}`);
+    if (!session) return;
+    const ok = confirm(`Delete "${session.name}"? This removes the chat history and queued jobs.`);
+    if (!ok) return;
     await api(`/api/sessions/${session.id}`, { method: "DELETE" });
     if (activeSession?.id === session.id) {
       activeSession = null;
-      el("timeline").innerHTML = "";
-      el("history").innerHTML = "";
+      el("conversation").innerHTML = "";
     }
     el("queueState").textContent = "Chat deleted.";
     await loadSessions();
   } catch (error) {
+    if (error.status === 404) {
+      if (activeSession?.id === sessionId) {
+        activeSession = null;
+        el("conversation").innerHTML = "";
+      }
+      el("queueState").textContent = "Chat deleted.";
+      await loadSessions();
+      return;
+    }
     el("queueState").textContent = `Delete failed: ${error.message}`;
+  } finally {
+    if (button?.isConnected) button.disabled = false;
   }
 }
 
@@ -273,7 +365,8 @@ async function sendPrompt() {
   if (!activeSession) await createSession();
   const rawPrompt = el("prompt").value.trim();
   const codeBlocks = [...rawPrompt.matchAll(/```[^\n]*\n([\s\S]*?)```/g)];
-  const selectedCode = codeBlocks.map((match) => match[1].trim()).filter(Boolean).join("\n\n");
+  const pastedCode = codeBlocks.map((match) => match[1].trim()).filter(Boolean).join("\n\n");
+  const selectedCode = [selectedCodeContext, pastedCode].filter(Boolean).join("\n\n");
   const prompt = rawPrompt.replace(/```[^\n]*\n[\s\S]*?```/g, " ").trim()
     || (selectedCode ? "Review the code in the provided context." : "");
   if (!prompt) return;
@@ -289,8 +382,26 @@ async function sendPrompt() {
     })
   });
   activeJob = job.id;
+  renderJob(job);
   el("prompt").value = "";
+  clearSelectedCodeContext();
   pollJob();
+}
+
+function clearSelectedCodeContext() {
+  selectedCodeContext = "";
+  el("selectionContext").hidden = true;
+  el("selectionContextLabel").textContent = "";
+}
+
+function captureSelectedCode() {
+  const browserSelection = window.getSelection();
+  const selection = browserSelection?.toString().trim();
+  if (!selection || !browserSelection.anchorNode || !el("fileViewer").contains(browserSelection.anchorNode)) return;
+  selectedCodeContext = selection;
+  const lineCount = selection.split("\n").length;
+  el("selectionContextLabel").textContent = `${openFilePath || "File"} · ${lineCount} selected line${lineCount === 1 ? "" : "s"}`;
+  el("selectionContext").hidden = false;
 }
 
 async function pollJob() {
@@ -304,7 +415,7 @@ async function pollJob() {
     await refreshWorkspace();
     return;
   }
-  pollTimer = setTimeout(pollJob, 1200);
+  pollTimer = setTimeout(pollJob, 350);
 }
 
 function escapeHtml(value) {
@@ -323,7 +434,6 @@ el("provider").addEventListener("change", () => {
   }
   editingDefaultProvider = el("provider").value;
   populateModelSelect(el("model"), el("provider").value, el("model").value);
-  el("baseUrl").value = modelCatalog[editingDefaultProvider]?.baseUrl || "";
   el("apiKeyOther").value = CORE_KEY_PROVIDERS.includes(editingDefaultProvider)
     ? ""
     : otherProviderKeyDrafts[editingDefaultProvider] || "";
@@ -331,12 +441,27 @@ el("provider").addEventListener("change", () => {
     populateModelSelect(el("promptModel"), el("provider").value, "", true);
   }
 });
+el("overrideOpenaiBaseUrl").addEventListener("change", () => {
+  el("openaiBaseUrlRow").hidden = !el("overrideOpenaiBaseUrl").checked;
+});
+["google", "openai", "anthropic"].forEach((provider) => {
+  const titleCase = provider[0].toUpperCase() + provider.slice(1);
+  el(`apiKey${titleCase}`).addEventListener("input", (event) => {
+    if (event.target.value) el(`enable${titleCase}Key`).checked = true;
+  });
+});
 el("promptProvider").addEventListener("change", () => {
   const provider = el("promptProvider").value || el("provider").value;
   populateModelSelect(el("promptModel"), provider, "", true);
 });
 el("sendPrompt").addEventListener("click", sendPrompt);
-el("timeline").addEventListener("click", async (event) => {
+el("prompt").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    sendPrompt();
+  }
+});
+el("conversation").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-approve-job]");
   if (!button) return;
   button.disabled = true;
@@ -359,7 +484,7 @@ el("sessions").addEventListener("click", (event) => {
   }
   const deleteButton = event.target.closest("[data-delete-session]");
   if (deleteButton) {
-    deleteSessionById(deleteButton.dataset.deleteSession);
+    deleteSessionById(deleteButton.dataset.deleteSession, deleteButton);
     return;
   }
   const openButton = event.target.closest("[data-session]");
@@ -369,6 +494,9 @@ el("sessions").addEventListener("click", (event) => {
   }
 });
 el("refreshFiles").addEventListener("click", refreshWorkspace);
+el("fileViewer").addEventListener("mouseup", captureSelectedCode);
+el("fileViewer").addEventListener("keyup", captureSelectedCode);
+el("clearSelectionContext").addEventListener("click", clearSelectedCodeContext);
 el("fileList").addEventListener("click", (event) => {
   const button = event.target.closest("[data-file]");
   if (button && !button.disabled) openFile(button.dataset.file);
