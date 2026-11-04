@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Local Coding Agent</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">CA</span>
+          <div>
+            <h1>Coding Agent</h1>
+            <p>Chats</p>
+          </div>
+        </div>
+        <button id="newSession" class="primary">New Chat</button>
+        <div id="sessions" class="session-list"></div>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div class="title-block">
+            <div class="session-heading">
+              <h2 id="sessionName">No session</h2>
+              <button id="renameSession" class="icon-action" title="Rename chat">Rename</button>
+              <button id="deleteSession" class="icon-action danger" title="Delete chat">Delete</button>
+            </div>
+            <p id="queueState">Create a session to begin.</p>
+          </div>
+        </header>
+
+        <section class="settings">
+          <label>Provider
+            <select id="provider"></select>
+          </label>
+          <label>API key
+            <input id="apiKey" type="password" placeholder="sk-...">
+          </label>
+          <label>Base URL
+            <input id="baseUrl" value="https://api.openai.com/v1">
+          </label>
+          <label>Model
+            <select id="model"></select>
+          </label>
+          <button id="saveSettings">Save API Settings</button>
+        </section>
+
+        <section class="composer">
+          <div class="mode-row" id="modes">
+            <button data-mode="ask" class="selected">Ask</button>
+            <button data-mode="plan">Plan</button>
+            <button data-mode="debug">Debug</button>
+            <button data-mode="agent">Agent</button>
+          </div>
+
+          <label>Selected code
+            <textarea id="selectedCode" rows="7" placeholder="Paste a selected block of code here before asking about it."></textarea>
+          </label>
+
+          <label>Prompt
+            <textarea id="prompt" rows="5" placeholder="Ask, plan, debug, or assign an agent task..."></textarea>
+          </label>
+
+          <div class="composer-options">
+            <label>Provider
+              <select id="promptProvider"></select>
+            </label>
+            <label>Model
+              <select id="promptModel"></select>
+            </label>
+            <label>Permissions
+              <select id="permissionMode">
+                <option value="safe_only">Auto-approve safe commands</option>
+                <option value="ask_every_time">Ask every time</option>
+                <option value="approve_all">Approve everything</option>
+              </select>
+            </label>
+            <button id="sendPrompt" class="primary">Queue prompt</button>
+          </div>
+        </section>
+
+        <section class="split">
+          <div>
+            <h3>Agent timeline</h3>
+            <div id="timeline" class="timeline"></div>
+          </div>
+          <div>
+            <h3>Session history</h3>
+            <div id="history" class="history"></div>
+          </div>
+        </section>
+      </section>
+
+      <aside class="file-panel">
+        <header class="file-header">
+          <div>
+            <h3>Files</h3>
+            <p id="workingPath">Loading workspace...</p>
+            <p id="gitState"></p>
+          </div>
+          <button id="refreshFiles">Refresh</button>
+        </header>
+        <div id="fileList" class="file-list"></div>
+        <section class="viewer">
+          <div class="viewer-title">
+            <strong id="openFileName">Select a file</strong>
+            <span id="openFileMeta"></span>
+          </div>
+          <pre id="fileViewer">Open a file to view the latest code.</pre>
+        </section>
+      </aside>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
