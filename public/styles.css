@@ -401,7 +401,11 @@ textarea {
 }
 
 @media (max-width: 900px) {
-  .shell,
+  .shell {
+    grid-template-columns: 220px minmax(360px, 1fr);
+    overflow-x: auto;
+  }
+
   .settings,
   .composer-options,
   .split {
@@ -411,17 +415,42 @@ textarea {
   .sidebar {
     position: sticky;
     top: 0;
-    max-height: 42vh;
-    height: auto;
+    height: 100vh;
+    max-height: none;
     overflow: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
   }
 
   .file-panel {
+    grid-column: 2;
     position: static;
     border-left: 0;
     border-top: 1px solid var(--line);
     max-height: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    grid-template-columns: 176px minmax(340px, 1fr);
+  }
+
+  .sidebar {
+    padding: 12px;
+  }
+
+  .brand {
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  h1 {
+    font-size: 15px;
   }
 }
