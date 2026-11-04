@@ -147,7 +147,17 @@ def process_job(job_id):
             auto_name_session(session["id"], input_data["prompt"])
             approval_state = {
                 key: graph_result[key]
-                for key in ("plan", "developer_output", "safety_assessment", "edit_results", "verification_results", "correction_attempts")
+                for key in (
+                    "plan",
+                    "workspace_info",
+                    "workspace_context",
+                    "files",
+                    "developer_output",
+                    "safety_assessment",
+                    "edit_results",
+                    "verification_results",
+                    "correction_attempts",
+                )
                 if key in graph_result
             }
             event(job_id, "safety", "Waiting for your approval before running these commands.", {

@@ -11,6 +11,7 @@ This project is a minimal Python local coding agent. It keeps the implementation
 - Persistent prompt queues processed in FIFO order per session.
 - Four modes: Ask, Plan, Debug, and Agent. Plan mode returns editable-in-chat steps with verification notes and uses recent conversation context for revisions.
 - Chat-style transcript with live streamed assistant replies.
+- Read-only answers and plans grounded with the current workspace path and a bounded set of relevant text files; likely secret files are excluded.
 - AI agent nodes for Planner, Developer, Safety, Reviewer, Tester, Browser Tester, and Deployer; the Tester evaluates command evidence and sends supported failures back for correction.
 - File creation and modification through bash commands.
 - Selected-code context pasted into the prompt composer.
@@ -43,10 +44,10 @@ This project is a minimal Python local coding agent. It keeps the implementation
 4. `orchestrator.py` drains each session queue in FIFO order; an approval-pending job pauses later prompts for that session, and saved queued prompts resume when the server starts again.
 5. The job enters `agent_graph.py`, a LangGraph `StateGraph`.
 6. Planner breaks the prompt into smaller tasks.
-7. Ask and Plan modes route to read-only workspace and reviewer nodes.
+7. Ask mode answers from workspace context without an unnecessary planning turn. Plan mode uses the Planner, then returns an editable-in-chat plan through the Reviewer.
 8. Debug and Agent modes route to Developer, Safety, bash tool, Reviewer, Tester, Browser Tester, and Deployer nodes.
 9. Safety combines the AI Safety agent's assessment with deterministic risk heuristics before applying the selected permission mode. “Ask every time” pauses the job with the exact command batch until the user approves it.
-10. Tester runs requested verification commands and reviews their results with the AI Tester. If either reports a supported failure, LangGraph routes back to Developer for a corrective pass.
+10. Tester runs requested verification commands and reviews their results with the AI Tester. If either reports a supported failure, LangGraph routes back to Developer for up to two corrective passes.
 11. If a localhost URL is mentioned, Browser Tester opens it in headless Chromium, collects rendered page evidence, and can route failures back to Developer.
 12. Text replies stream from LangChain into the job record while the UI polls; the final answer and graph events are also stored in session history and job events.
 
