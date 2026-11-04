@@ -65,9 +65,11 @@ button:hover {
   border-right: 1px solid var(--line);
   background: #eef2f6;
   padding: 20px;
-  position: sticky;
-  top: 0;
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 260px;
   height: 100vh;
+  height: 100dvh;
   overflow: auto;
   z-index: 5;
 }
@@ -160,12 +162,14 @@ p {
 }
 
 .workspace {
+  grid-column: 2;
   display: grid;
   gap: 18px;
   align-content: start;
 }
 
 .file-panel {
+  grid-column: 3;
   border-left: 1px solid var(--line);
   background: #f1f4f8;
   display: grid;
@@ -403,7 +407,6 @@ textarea {
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: 220px minmax(360px, 1fr);
-    overflow-x: auto;
   }
 
   .settings,
@@ -413,9 +416,9 @@ textarea {
   }
 
   .sidebar {
-    position: sticky;
-    top: 0;
+    width: 220px;
     height: 100vh;
+    height: 100dvh;
     max-height: none;
     overflow: auto;
     border-right: 1px solid var(--line);
@@ -437,6 +440,7 @@ textarea {
   }
 
   .sidebar {
+    width: 176px;
     padding: 12px;
   }
 
