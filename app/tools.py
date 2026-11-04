@@ -1,6 +1,5 @@
 import re
 import subprocess
-import urllib.request
 from pathlib import Path
 
 ROOT = Path.cwd()
@@ -66,7 +65,7 @@ def run_bash(command, cwd="."):
 
 def _git_numstat():
     completed = subprocess.run(
-        "git diff --numstat -- .",
+        "git diff HEAD --numstat -- .",
         cwd=ROOT,
         shell=True,
         executable="/bin/bash",
@@ -83,14 +82,34 @@ def _git_numstat():
         if len(parts) < 3:
             continue
         added, deleted, *path_parts = parts
+        # Binary diffs use '-' instead of line counts, so don't display a false 0-line badge.
+        if not added.isdigit() or not deleted.isdigit():
+            continue
         path = " ".join(path_parts)
-        added_count = int(added) if added.isdigit() else 0
-        deleted_count = int(deleted) if deleted.isdigit() else 0
         changes[path] = {
-            "added": added_count,
-            "deleted": deleted_count,
-            "total": added_count + deleted_count,
+            "added": int(added),
+            "deleted": int(deleted),
+            "total": int(added) + int(deleted),
         }
+    untracked = subprocess.run(
+        "git ls-files -z --others --exclude-standard",
+        cwd=ROOT,
+        shell=True,
+        executable="/bin/bash",
+        text=True,
+        capture_output=True,
+        timeout=COMMAND_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if untracked.returncode == 0:
+        for path in untracked.stdout.split("\0"):
+            if not path:
+                continue
+            try:
+                line_count = len((ROOT / path).read_text(encoding="utf-8").splitlines())
+            except (OSError, UnicodeDecodeError):
+                continue
+            changes[path] = {"added": line_count, "deleted": 0, "total": line_count}
     return {"available": True, "files": changes}
 
 
@@ -135,12 +154,49 @@ def read_workspace_file(file_path):
 
 
 def smoke_test_url(url):
-    with urllib.request.urlopen(url, timeout=10) as response:
-        body = response.read().decode("utf-8", errors="replace")
-        title_match = re.search(r"<title>(.*?)</title>", body, re.IGNORECASE)
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
         return {
-            "ok": 200 <= response.status < 300,
-            "status": response.status,
-            "title": title_match.group(1) if title_match else "",
-            "bytes": len(body),
+            "available": False,
+            "ok": False,
+            "error": "Playwright is not installed. Run python3 -m pip install -r requirements.txt and python3 -m playwright install chromium.",
         }
+
+    try:
+        with sync_playwright() as playwright:
+            try:
+                browser = playwright.chromium.launch(headless=True)
+            except Exception as exc:
+                return {"available": False, "ok": False, "error": f"Chromium is unavailable: {exc}"}
+
+            try:
+                page = browser.new_page()
+                page_errors = []
+                page.on("pageerror", lambda error: page_errors.append(str(error)))
+                try:
+                    response = page.goto(url, wait_until="load", timeout=10_000)
+                    # The app publishes this marker after sessions, settings, and files finish loading.
+                    page.wait_for_function(
+                        "() => document.documentElement.dataset.codingAgentReady !== 'false'",
+                        timeout=5_000,
+                    )
+                    body = page.locator("body").inner_text(timeout=5_000)
+                    status = response.status if response else None
+                    return {
+                        "available": True,
+                        "ok": bool(status and 200 <= status < 400 and not page_errors),
+                        "status": status,
+                        "url": page.url,
+                        "title": page.title(),
+                        "headings": page.locator("h1:visible, h2:visible, h3:visible").all_text_contents()[:30],
+                        "buttons": page.locator("button:visible").all_text_contents()[:40],
+                        "text": body[:4000],
+                        "pageErrors": page_errors,
+                    }
+                except Exception as exc:
+                    return {"available": True, "ok": False, "url": url, "error": str(exc), "pageErrors": page_errors}
+            finally:
+                browser.close()
+    except Exception as exc:
+        return {"available": False, "ok": False, "error": str(exc)}

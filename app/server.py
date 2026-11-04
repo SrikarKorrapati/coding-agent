@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app.model_catalog import list_model_catalog
-from app.orchestrator import enqueue
+from app.orchestrator import enqueue, resume_queued_jobs
 from app.storage import (
     create_job,
     create_session,
@@ -16,6 +16,7 @@ from app.storage import (
     get_session,
     get_settings,
     list_sessions,
+    request_job_approval,
     update_session,
     update_settings,
 )
@@ -24,6 +25,7 @@ from app.tools import get_workspace_info, list_files, read_workspace_file, run_b
 ROOT = Path.cwd()
 PUBLIC_DIR = ROOT / "public"
 PORT = int(os.environ.get("PORT", "4317"))
+HOST = os.environ.get("HOST", "127.0.0.1")
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -34,6 +36,7 @@ class Handler(SimpleHTTPRequestHandler):
         payload = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("content-type", "application/json; charset=utf-8")
+        self.send_header("cache-control", "no-store")
         self.send_header("content-length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -117,6 +120,13 @@ class Handler(SimpleHTTPRequestHandler):
             enqueue(job)
             return self.send_json(202, job)
 
+        if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "approve" and method == "POST":
+            job = request_job_approval(parts[2])
+            if not job:
+                return self.send_json(409, {"error": "This job is not waiting for approval."})
+            enqueue(job)
+            return self.send_json(202, job)
+
         if len(parts) == 3 and parts[:2] == ["api", "jobs"] and method == "GET":
             job = get_job(parts[2])
             return self.send_json(200, job) if job else self.send_json(404, {"error": "Job not found"})
@@ -142,7 +152,8 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main():
     ensure_store()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    resume_queued_jobs()
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Local coding agent running at http://localhost:{PORT}")
     try:
         server.serve_forever()

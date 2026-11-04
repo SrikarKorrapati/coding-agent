@@ -10,6 +10,11 @@ except Exception:  # Dependencies may not be installed until requirements are ap
     SystemMessage = None
     ChatOpenAI = None
 
+try:
+    from langchain_anthropic import ChatAnthropic
+except Exception:  # Keep read-only and local fallback features available before setup.
+    ChatAnthropic = None
+
 
 def extract_json(text):
     first = text.find("{")
@@ -31,10 +36,17 @@ def _content_to_text(content):
 
 
 def create_chat_model(settings):
+    if settings.get("provider") == "anthropic":
+        if ChatAnthropic is None:
+            raise RuntimeError("The Anthropic LangChain integration is not installed. Run: python3 -m pip install -r requirements.txt")
+        # Omit temperature because current Claude models may reject sampling parameters.
+        return ChatAnthropic(
+            anthropic_api_key=settings.get("apiKey"),
+            model=settings.get("model"),
+            base_url=settings.get("baseUrl"),
+        )
     if ChatOpenAI is None:
         raise RuntimeError("LangChain dependencies are not installed. Run: python3 -m pip install -r requirements.txt")
-    if settings.get("provider") == "anthropic":
-        raise RuntimeError("Anthropic direct API is listed in the UI, but this prototype currently executes through OpenAI-compatible chat endpoints. Use OpenRouter or an OpenAI-compatible gateway for Anthropic models.")
     return ChatOpenAI(
         api_key=settings.get("apiKey"),
         model=settings.get("model"),

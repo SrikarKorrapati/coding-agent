@@ -5,6 +5,9 @@ let pollTimer = null;
 let masterSettings = null;
 let openFilePath = null;
 let modelCatalog = {};
+let editingDefaultProvider = "openai";
+let otherProviderKeyDrafts = {};
+const CORE_KEY_PROVIDERS = ["google", "openai", "anthropic"];
 
 const el = (id) => document.getElementById(id);
 
@@ -38,7 +41,6 @@ function renderSessions(sessions) {
 
 function renderSession(session) {
   activeSession = session;
-  el("sessionName").textContent = session.name;
   el("queueState").textContent = `${session.queue.length} queued prompt${session.queue.length === 1 ? "" : "s"}`;
   el("history").innerHTML = session.history.slice().reverse().map((item) => `
     <article class="message">
@@ -50,10 +52,18 @@ function renderSession(session) {
 
 function renderSettings(settings) {
   masterSettings = settings;
+  editingDefaultProvider = settings.provider || "openai";
+  otherProviderKeyDrafts = { ...(settings.apiKeys || {}) };
   populateProviderSelect(el("provider"), settings.provider || "openai");
   populateModelSelect(el("model"), el("provider").value, settings.model);
-  el("apiKey").value = settings.apiKey || "";
-  el("baseUrl").value = settings.baseUrl || "https://api.openai.com/v1";
+  el("baseUrl").value = settings.baseUrl || modelCatalog[settings.provider]?.baseUrl || "";
+  const apiKeys = settings.apiKeys || {};
+  el("apiKeyGoogle").value = apiKeys.google || (settings.provider === "google" ? settings.apiKey || "" : "");
+  el("apiKeyOpenai").value = apiKeys.openai || (settings.provider === "openai" ? settings.apiKey || "" : "");
+  el("apiKeyAnthropic").value = apiKeys.anthropic || (settings.provider === "anthropic" ? settings.apiKey || "" : "");
+  el("apiKeyOther").value = CORE_KEY_PROVIDERS.includes(settings.provider)
+    ? ""
+    : apiKeys[settings.provider] || settings.apiKey || "";
   populateProviderSelect(el("promptProvider"), "", true);
   populateModelSelect(el("promptModel"), settings.provider || "openai", "", true);
 }
@@ -73,15 +83,26 @@ function populateModelSelect(select, providerId, selected = "", includeMaster = 
   `).join("");
 }
 
-function syncBaseUrlFromProvider(providerId) {
-  const provider = modelCatalog[providerId];
-  if (provider?.baseUrl) el("baseUrl").value = provider.baseUrl;
+function showView(view) {
+  const settingsOpen = view === "settings";
+  el("shell").classList.toggle("settings-open", settingsOpen);
+  el("settingsPage").hidden = !settingsOpen;
+  el("homeView").classList.toggle("selected", !settingsOpen);
+  el("settingsView").classList.toggle("selected", settingsOpen);
 }
 
 function renderJob(job) {
   const statusClass = job.status === "done" ? "status-done" : job.status === "failed" ? "status-failed" : "";
   el("queueState").innerHTML = `Job <span class="${statusClass}">${job.status}</span>`;
-  el("timeline").innerHTML = job.events.map((event) => `
+  const commands = job.approval?.developer_output?.commands || [];
+  const approval = job.status === "waiting_approval" ? `
+    <section class="approval-card">
+      <strong>Review commands before they run</strong>
+      <pre>${escapeHtml(commands.map((item) => `${item.command}${item.why ? `  # ${item.why}` : ""}`).join("\n"))}</pre>
+      <button class="primary" data-approve-job="${escapeHtml(job.id)}">Approve and run commands</button>
+    </section>
+  ` : "";
+  el("timeline").innerHTML = approval + job.events.map((event) => `
     <article class="event">
       <strong>${escapeHtml(event.agent)} · ${new Date(event.at).toLocaleTimeString()}</strong>
       <div>${escapeHtml(event.message)}</div>
@@ -132,23 +153,49 @@ async function openFile(path, updateSelection = true) {
 }
 
 async function loadSessions() {
-  const sessions = await api("/api/sessions");
+  let sessions;
+  try {
+    sessions = await api("/api/sessions");
+  } catch (error) {
+    el("queueState").textContent = `Could not load chats: ${error.message}`;
+    return;
+  }
   if (activeSession && !sessions.some((session) => session.id === activeSession.id)) {
     activeSession = null;
   }
-  if (!activeSession && sessions[0]) {
-    await loadSession(sessions[0].id);
-  }
+  // Render the list before loading a session so a slow session request cannot hide the chats.
   renderSessions(sessions);
+  if (!activeSession && sessions[0]) {
+    el("queueState").textContent = "Loading latest chat…";
+    try {
+      await loadSession(sessions[0].id);
+    } catch (error) {
+      el("queueState").textContent = `Could not open the latest chat: ${error.message}`;
+    }
+  }
 }
 
 async function loadSession(id) {
+  clearTimeout(pollTimer);
+  pollTimer = null;
+  activeJob = null;
+  el("timeline").innerHTML = "";
   const session = await api(`/api/sessions/${id}`);
   renderSession(session);
-  await loadSessions();
+  renderSessions(await api("/api/sessions"));
+  for (const jobId of session.queue) {
+    const job = await api(`/api/jobs/${jobId}`).catch(() => null);
+    if (job && ["queued", "running", "waiting_approval"].includes(job.status)) {
+      activeJob = job.id;
+      renderJob(job);
+      pollJob();
+      break;
+    }
+  }
 }
 
 async function createSession() {
+  showView("home");
   const session = await api("/api/sessions", {
     method: "POST",
     body: JSON.stringify({ name: "New Chat" })
@@ -157,17 +204,32 @@ async function createSession() {
 }
 
 async function saveSettings() {
-  const settings = await api("/api/settings", {
-    method: "PATCH",
-    body: JSON.stringify({
-      apiKey: el("apiKey").value.trim(),
-      provider: el("provider").value,
-      baseUrl: el("baseUrl").value.trim(),
-      model: el("model").value
-    })
-  });
-  renderSettings(settings);
-  el("queueState").textContent = "Master API settings saved.";
+  el("settingsStatus").textContent = "Saving…";
+  try {
+    const provider = el("provider").value;
+    const apiKeyOther = el("apiKeyOther").value.trim();
+    const apiKeys = {
+      ...otherProviderKeyDrafts,
+      google: el("apiKeyGoogle").value.trim(),
+      openai: el("apiKeyOpenai").value.trim(),
+      anthropic: el("apiKeyAnthropic").value.trim()
+    };
+    if (!CORE_KEY_PROVIDERS.includes(provider)) apiKeys[provider] = apiKeyOther;
+    const settings = await api("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({
+        apiKey: CORE_KEY_PROVIDERS.includes(provider) ? "" : apiKeyOther,
+        apiKeys,
+        provider,
+        baseUrl: el("baseUrl").value.trim() || modelCatalog[provider]?.baseUrl || masterSettings.baseUrl,
+        model: el("model").value
+      })
+    });
+    renderSettings(settings);
+    el("settingsStatus").textContent = "Settings saved.";
+  } catch (error) {
+    el("settingsStatus").textContent = `Save failed: ${error.message}`;
+  }
 }
 
 async function renameSessionById(sessionId) {
@@ -199,7 +261,6 @@ async function deleteSessionById(sessionId) {
       activeSession = null;
       el("timeline").innerHTML = "";
       el("history").innerHTML = "";
-      el("sessionName").textContent = "No session";
     }
     el("queueState").textContent = "Chat deleted.";
     await loadSessions();
@@ -210,14 +271,18 @@ async function deleteSessionById(sessionId) {
 
 async function sendPrompt() {
   if (!activeSession) await createSession();
-  const prompt = el("prompt").value.trim();
+  const rawPrompt = el("prompt").value.trim();
+  const codeBlocks = [...rawPrompt.matchAll(/```[^\n]*\n([\s\S]*?)```/g)];
+  const selectedCode = codeBlocks.map((match) => match[1].trim()).filter(Boolean).join("\n\n");
+  const prompt = rawPrompt.replace(/```[^\n]*\n[\s\S]*?```/g, " ").trim()
+    || (selectedCode ? "Review the code in the provided context." : "");
   if (!prompt) return;
   const job = await api(`/api/sessions/${activeSession.id}/prompts`, {
     method: "POST",
     body: JSON.stringify({
       mode: activeMode,
       prompt,
-      selectedCode: el("selectedCode").value,
+      selectedCode,
       provider: el("promptProvider").value,
       model: el("promptModel").value,
       permissionMode: el("permissionMode").value
@@ -253,20 +318,39 @@ function escapeHtml(value) {
 el("newSession").addEventListener("click", createSession);
 el("saveSettings").addEventListener("click", saveSettings);
 el("provider").addEventListener("change", () => {
-  syncBaseUrlFromProvider(el("provider").value);
+  if (!CORE_KEY_PROVIDERS.includes(editingDefaultProvider)) {
+    otherProviderKeyDrafts[editingDefaultProvider] = el("apiKeyOther").value.trim();
+  }
+  editingDefaultProvider = el("provider").value;
   populateModelSelect(el("model"), el("provider").value, el("model").value);
+  el("baseUrl").value = modelCatalog[editingDefaultProvider]?.baseUrl || "";
+  el("apiKeyOther").value = CORE_KEY_PROVIDERS.includes(editingDefaultProvider)
+    ? ""
+    : otherProviderKeyDrafts[editingDefaultProvider] || "";
+  if (!el("promptProvider").value) {
+    populateModelSelect(el("promptModel"), el("provider").value, "", true);
+  }
 });
 el("promptProvider").addEventListener("change", () => {
   const provider = el("promptProvider").value || el("provider").value;
   populateModelSelect(el("promptModel"), provider, "", true);
 });
-el("renameSession").addEventListener("click", () => {
-  if (activeSession) renameSessionById(activeSession.id);
-});
-el("deleteSession").addEventListener("click", () => {
-  if (activeSession) deleteSessionById(activeSession.id);
-});
 el("sendPrompt").addEventListener("click", sendPrompt);
+el("timeline").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-approve-job]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const job = await api(`/api/jobs/${button.dataset.approveJob}/approve`, { method: "POST" });
+    activeJob = job.id;
+    pollJob();
+  } catch (error) {
+    button.disabled = false;
+    el("queueState").textContent = `Approval failed: ${error.message}`;
+  }
+});
+el("homeView").addEventListener("click", () => showView("home"));
+el("settingsView").addEventListener("click", () => showView("settings"));
 el("sessions").addEventListener("click", (event) => {
   const renameButton = event.target.closest("[data-rename-session]");
   if (renameButton) {
@@ -279,7 +363,10 @@ el("sessions").addEventListener("click", (event) => {
     return;
   }
   const openButton = event.target.closest("[data-session]");
-  if (openButton) loadSession(openButton.dataset.session);
+  if (openButton) {
+    showView("home");
+    loadSession(openButton.dataset.session);
+  }
 });
 el("refreshFiles").addEventListener("click", refreshWorkspace);
 el("fileList").addEventListener("click", (event) => {
@@ -295,5 +382,5 @@ el("modes").addEventListener("click", (event) => {
 
 modelCatalog = await api("/api/models");
 renderSettings(await api("/api/settings"));
-await refreshWorkspace();
-loadSessions();
+await Promise.allSettled([refreshWorkspace(), loadSessions()]);
+document.documentElement.dataset.codingAgentReady = "true";

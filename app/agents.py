@@ -1,5 +1,3 @@
-import re
-
 MODES = {
     "ask": {
         "label": "Ask",
@@ -48,7 +46,7 @@ AGENTS = [
     {
         "id": "browserTester",
         "name": "Browser Tester",
-        "goal": "When a local site exists, smoke test it with HTTP checks.",
+        "goal": "When a local site URL is provided, inspect the rendered page in headless Chromium and report evidence-backed failures.",
     },
     {
         "id": "deployer",
@@ -73,8 +71,5 @@ def normalize_mode(mode):
     return mode if mode in MODES else "ask"
 
 
-def mode_allows_write(mode, prompt=""):
-    snippet_pattern = r"\b(snippet|example only|show me code|do not modify|don't modify)\b"
-    if re.search(snippet_pattern, prompt or "", re.IGNORECASE):
-        return False
+def mode_allows_write(mode):
     return mode in {"agent", "debug"}

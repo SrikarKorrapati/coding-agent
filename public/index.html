@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-coding-agent-ready="false">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,7 +7,17 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main class="shell">
+    <main id="shell" class="shell">
+      <nav class="app-rail" aria-label="Main navigation">
+        <button id="homeView" class="rail-button selected" type="button" title="Home" aria-label="Home">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" /></svg>
+        </button>
+        <span class="rail-spacer"></span>
+        <button id="settingsView" class="rail-button" type="button" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" /><path d="m19.4 13.5 1.3 1-1.5 2.6-1.6-.6a7.8 7.8 0 0 1-1.5.9l-.3 1.7h-3l-.3-1.7a7.8 7.8 0 0 1-1.5-.9l-1.6.6-1.5-2.6 1.3-1a7.8 7.8 0 0 1 0-1.8l-1.3-1 1.5-2.6 1.6.6a7.8 7.8 0 0 1 1.5-.9l.3-1.7h3l.3 1.7a7.8 7.8 0 0 1 1.5.9l1.6-.6 1.5 2.6-1.3 1a7.8 7.8 0 0 1 0 1.8Z" /></svg>
+        </button>
+      </nav>
+
       <aside class="sidebar">
         <div class="brand">
           <span class="brand-mark">CA</span>
@@ -21,34 +31,8 @@
       </aside>
 
       <section class="workspace">
-        <header class="topbar">
-          <div class="title-block">
-            <div class="session-heading">
-              <h2 id="sessionName">No session</h2>
-              <button id="renameSession" class="icon-action" title="Rename chat">Rename</button>
-              <button id="deleteSession" class="icon-action danger" title="Delete chat">Delete</button>
-            </div>
-            <p id="queueState">Create a session to begin.</p>
-          </div>
-        </header>
-
-        <section class="settings">
-          <label>Provider
-            <select id="provider"></select>
-          </label>
-          <label>API key
-            <input id="apiKey" type="password" placeholder="sk-...">
-          </label>
-          <label>Base URL
-            <input id="baseUrl" value="https://api.openai.com/v1">
-          </label>
-          <label>Model
-            <select id="model"></select>
-          </label>
-          <button id="saveSettings">Save API Settings</button>
-        </section>
-
         <section class="composer">
+          <p id="queueState" class="workspace-status">Create a session to begin.</p>
           <div class="mode-row" id="modes">
             <button data-mode="ask" class="selected">Ask</button>
             <button data-mode="plan">Plan</button>
@@ -56,12 +40,8 @@
             <button data-mode="agent">Agent</button>
           </div>
 
-          <label>Selected code
-            <textarea id="selectedCode" rows="7" placeholder="Paste a selected block of code here before asking about it."></textarea>
-          </label>
-
           <label>Prompt
-            <textarea id="prompt" rows="5" placeholder="Ask, plan, debug, or assign an agent task..."></textarea>
+            <textarea id="prompt" rows="9" placeholder="Ask a question or describe a task. Paste code inside a fenced block to include it as context."></textarea>
           </label>
 
           <div class="composer-options">
@@ -90,6 +70,68 @@
           <div>
             <h3>Session history</h3>
             <div id="history" class="history"></div>
+          </div>
+        </section>
+      </section>
+
+      <section id="settingsPage" class="settings-page" hidden>
+        <header class="page-heading">
+          <h2>Settings</h2>
+          <p>Choose a default model and manage API keys for all chats.</p>
+        </header>
+
+        <section class="settings-card default-settings-card">
+          <div>
+            <h3>Default model</h3>
+            <p>Used when a prompt is set to use the master provider or model.</p>
+          </div>
+          <div class="settings-defaults">
+            <label>Provider
+              <select id="provider"></select>
+            </label>
+            <label>Model
+              <select id="model"></select>
+            </label>
+            <label>Base URL
+              <input id="baseUrl" autocomplete="url" placeholder="https://api.example.com/v1">
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-card api-keys-card">
+          <div class="keys-heading">
+            <div>
+              <h3>API keys</h3>
+              <p>Keys are stored locally and shared across chats.</p>
+            </div>
+          </div>
+
+          <div class="provider-key-list">
+            <label class="provider-key-row">
+              <span class="provider-key-name"><strong>Google Gemini</strong><small>Gemini API key</small></span>
+              <input id="apiKeyGoogle" type="password" autocomplete="off" placeholder="Enter Gemini API key">
+            </label>
+            <label class="provider-key-row">
+              <span class="provider-key-name"><strong>OpenAI</strong><small>OpenAI API key</small></span>
+              <input id="apiKeyOpenai" type="password" autocomplete="off" placeholder="Enter OpenAI API key">
+            </label>
+            <label class="provider-key-row">
+              <span class="provider-key-name"><strong>Claude</strong><small>Anthropic API key</small></span>
+              <input id="apiKeyAnthropic" type="password" autocomplete="off" placeholder="Enter Claude API key">
+            </label>
+          </div>
+
+          <details class="other-provider-key">
+            <summary>Other OpenAI-compatible providers</summary>
+            <label>API key for the selected default provider
+              <input id="apiKeyOther" type="password" autocomplete="off" placeholder="Optional provider API key">
+            </label>
+            <p>Used for providers such as Groq, Mistral, and OpenRouter.</p>
+          </details>
+
+          <div class="settings-actions">
+            <button id="saveSettings" class="primary">Save settings</button>
+            <p id="settingsStatus" role="status" aria-live="polite"></p>
           </div>
         </section>
       </section>
